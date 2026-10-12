@@ -6,12 +6,13 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
 source = Path(__file__).resolve().parent.parent
 binary = Path(os.environ.get('SIMPLEWM_TEST_BINARY', str(source / 'build/simplewm')))
-def wait_for(fn, description, timeout=10):
+def wait_for(fn, description, timeout=45):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         result = fn()
@@ -138,6 +139,10 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         lock.kill(); lock.wait()
         assert status()['locked'], 'locker crash must remain locked'
         print('OK native/Xwayland windows, real shortcuts, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
+    except BaseException:
+        log.flush()
+        print((root / 'session.log').read_text(errors='replace'), file=sys.stderr)
+        raise
     finally:
         log.flush()
         (source / 'build/session-check.log').write_text((root / 'session.log').read_text())

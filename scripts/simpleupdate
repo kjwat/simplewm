@@ -81,10 +81,8 @@ def safe_environment(home):
     }
 
 def build_identity():
-    uid = int(os.environ.get('SUDO_UID', '65534'))
-    user = pwd.getpwuid(uid)
-    if user.pw_uid == 0:
-        user = pwd.getpwnam('nobody')
+    # Builds cannot inherit the writer's access to personal files or credentials.
+    user = pwd.getpwnam('nobody')
     return user.pw_uid, user.pw_gid
 
 def as_user(uid, gid):

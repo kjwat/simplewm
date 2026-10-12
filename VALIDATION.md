@@ -17,15 +17,23 @@ Source checks completed on 2026-10-12 in an isolated Debian 13 build root:
 * Wallpaper palette generation, Unicode/spaced paths, preservation of font
   settings and existing GTK/Firefox configuration, and rollback.
 * The official SimpleSuite revision
-  `1d1c3b8c2bd352611ec3fe686e089ed9b25fa04a` passed its full release gate and
-  standalone Simpleterm checks.
+  `fc7701c15f21ac1aa33db572e46a5ee6ff6de647` passed its full release gate and
+  standalone Simpleterm checks, including SimpleSave's optional SimpleWM backup.
+* SimpleCheck's real terminal/Git test committed, pushed and pulled the SimpleWM
+  folder without changing its peer repositories. The installed host SimpleCheck
+  and SimpleSave binaries also passed their integration checks.
 
 The prepared SimpleOS ISO has booted in UEFI and BIOS QEMU virtual machines.
-The UEFI live system passed checks for the Liquorix kernel, canonical installation
+Both live systems passed checks for the Liquorix kernel, canonical installation
 paths, fonts, configuration, removal of dwm, and preserved file capabilities.
-An attended Calamares disk installation was started successfully.
+Signed Debian/Liquorix APT checks and official GitHub update checks passed in the
+live VM. A real unprivileged SimpleWM rebuild passed the native/Xwayland session
+gate and transactional installation. An earlier session-test timeout left the
+working binaries intact; the retry passed with an emulation-tolerant timeout.
+An attended Calamares disk installation was started successfully, and its
+SimpleWM slideshow rendered correctly.
 
 Disk installation completion, installed-system boot and desktop acceptance,
-slideshow rendering, and checks against the final ISO remain release work.
+and checks against the final ISO remain release work.
 This source publication does not certify a finished ISO. Physical hardware and
 the subjective mouse feel still require validation after installation.

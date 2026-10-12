@@ -10,8 +10,8 @@ The build staging directory is `/home/keelan/simpleos-build`:
 * `rootfs/`: extracted runtime filesystem, updated with APT and Liquorix.
 * `buildroot/`: separate Debian build/test environment, with compiler headers
   and the full upstream test dependencies.
-* `simplesuite/`: verified official Git source at the recorded revision.
-* `payload/usr/local/`: tested Suite and Simpleterm staged through their installers.
+* `simplesuite-next/`: verified official Git source at the recorded revision.
+* `payload-next/usr/local/`: tested Suite and Simpleterm staged through their installers.
 * `media/`: extracted ISO media, used to replace the live squashfs and boot files.
 
 To reproduce from a new staging directory, extract the ISO with xorriso and
@@ -25,6 +25,8 @@ then stage Simpleterm with `install-simpleterm.sh --no-deps` and DESTDIR.
 
 Divert `/usr/lib/os-release` to `/usr/lib/os-release.debian` using dpkg-divert
 inside the staged image, then run `prepare-rootfs.py ROOTFS PAYLOAD SUITE_SOURCE`.
+The Suite revision is read from the staged install manifest; an explicit
+`--suite-revision` must agree with it.
 Run `make DESTDIR=ROOTFS install` for SimpleWM after building/testing it against
 that Debian ABI. Ship Ubuntu Sans/Ubuntu Sans Mono and their font licenses,
 Yaru themes/cursor and their licenses, and the original wallpaper under
@@ -32,7 +34,11 @@ Yaru themes/cursor and their licenses, and the original wallpaper under
 the staged root. Keep machine-id empty and omit SSH host keys, private data,
 Tailscale identities, apt archives, temporary runtime files and build artifacts.
 Copy the clean WM source to `/usr/local/share/simplewm/source` and record its
-`source_digest` from `scripts/simpleupdate` in the WM install manifest.
+published Git commit as `simplewm_source_sha` in
+`/usr/local/share/simplewm/install-manifest`, alongside
+`repository=https://github.com/kjwat/simplewm.git`. For unpublished local changes,
+use `source_digest` from `scripts/simpleupdate` instead. Generated build files and
+Git metadata do not belong in the source snapshot.
 
 Finally:
 

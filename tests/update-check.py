@@ -13,6 +13,9 @@ loader = importlib.machinery.SourceFileLoader('simpleupdate', str(path))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 update = importlib.util.module_from_spec(spec)
 loader.exec_module(update)
+with patch.dict(update.os.environ, {'SUDO_UID': str(update.os.getuid())}):
+    unprivileged = update.pwd.getpwnam('nobody')
+    assert update.build_identity() == (unprivileged.pw_uid, unprivileged.pw_gid)
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp)
     prefix = root / 'local'

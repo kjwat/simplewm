@@ -11,14 +11,23 @@ import shutil
 
 RELEASE = '0.7-simplewm'
 SOURCE = Path(__file__).resolve().parent.parent
-SHA = '1d1c3b8c2bd352611ec3fe686e089ed9b25fa04a'
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('rootfs', type=Path)
     parser.add_argument('payload', type=Path)
     parser.add_argument('suite_source', type=Path)
+    parser.add_argument('--suite-revision',
+                        help='verified official Suite commit represented by the staged payload')
     args = parser.parse_args()
+    manifest = args.payload / 'usr/local/share/simplesuite/install-manifest'
+    installed = next((line.split('=', 1)[1] for line in manifest.read_text().splitlines()
+                      if line.startswith('simplesuite_source_sha=')), '')
+    revision = args.suite_revision or installed
+    if len(revision) != 40 or any(c not in '0123456789abcdef' for c in revision):
+        parser.error('--suite-revision must be a full Git commit SHA')
+    if revision != installed:
+        parser.error('Suite revision does not match the staged install manifest')
     root = args.rootfs.resolve()
     if root == Path('/') or not (root / 'etc/calamares/settings.conf').is_file():
         parser.error('expected an extracted SimpleOS live image')
@@ -47,6 +56,11 @@ def main():
         'usr/local/share/simpleos/payload.sha256',
     ]:
         remove(relative)
+    # A previous prepared image uses a canonical sbin daemon with a bin symlink.
+    # Replace that link before copying a fresh installer's regular bin payload.
+    daemon_link = root / 'usr/local/bin/simpleserved'
+    if daemon_link.is_symlink():
+        daemon_link.unlink()
     shutil.copytree(args.payload / 'usr/local', root / 'usr/local', dirs_exist_ok=True, symlinks=True)
     # A clean source snapshot replaces the old snapshot; no stale files survive.
     shutil.copytree(args.suite_source, root / 'usr/local/share/simplesuite/source',
@@ -58,6 +72,7 @@ def main():
     (root / 'usr/local/bin/simpleserved').symlink_to('../sbin/simpleserved')
     copy(SOURCE / 'image/simpleos-finalize-target', 'usr/local/sbin/simpleos-finalize-target')
     copy(SOURCE / 'image/login.sh', 'usr/local/share/simplewm/login.sh')
+    copy(SOURCE / 'image/user-profile.sh', 'etc/skel/.profile')
     copy(SOURCE / 'image/calamares-show.qml', 'etc/calamares/branding/simpleos/show.qml')
     copy(SOURCE / 'image/20-simpleos-liquorix.cfg', 'etc/default/grub.d/20-simpleos-liquorix.cfg')
     write('usr/local/bin/simpleos-session', '#!/bin/sh\nexec /usr/local/bin/simplewm-session "$@"\n', 0o755)
@@ -99,14 +114,14 @@ Super+Enter: Simpleterm. Super+Space: Firefox. Super+F1: help.
 Updates: simpleupdate. The live medium keeps XFCE for Calamares.
 ''')
     for relative in ['VERSION', 'REVISION']:
-        write('usr/local/share/simpleos/' + relative, (RELEASE if relative == 'VERSION' else SHA[:12]) + '\n')
-    write('usr/local/share/simpleos/simplesuite.commit', SHA + '\n')
+        write('usr/local/share/simpleos/' + relative, (RELEASE if relative == 'VERSION' else revision[:12]) + '\n')
+    write('usr/local/share/simpleos/simplesuite.commit', revision + '\n')
     write('usr/local/share/simpleos/SOURCES.lock', f'''SimpleOS {RELEASE}
 Base: SimpleOS 0.6-r1 ISO (unaltered BIOS/UEFI boot loaders and XFCE Calamares flow)
 SimpleWM: 0.1.0, GPL-3.0, local source /usr/local/share/simplewm/source
 dwl protocol core: v0.7, 74e45c4014ae7048ecbb76eb6f54034b8b479480
 SimpleSuite official: https://github.com/kjwat/simplesuite.git
-SimpleSuite commit: {SHA}
+SimpleSuite commit: {revision}
 Suite source: /usr/local/share/simplesuite/source
 Debian: trixie, trixie-updates, trixie-security, normal signed APT
 Liquorix: https://liquorix.net/debian trixie main, dedicated Signed-By keyring
@@ -135,6 +150,11 @@ Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted with
     cfg['Text']['custom-font'] = 'false'
     with term.open('w') as out:
         cfg.write(out)
+    bashrc = root / 'etc/skel/.bashrc'
+    with bashrc.open('a') as out:
+        for short, command in (('note', 'simplenote'), ('term', 'simpleterm'), ('save', 'simplesave')):
+            if f'alias {short}=' not in bashrc.read_text():
+                out.write(f"\nalias {short}='/usr/local/bin/{command}'\n")
     live_setup = root / 'usr/local/bin/simpleos-live-session-setup'
     live_setup.write_text(live_setup.read_text().replace('installed dwm system', 'installed SimpleWM system')
                           .replace('-s SimpleOS', '-s Yaru-red-dark').replace('Ubuntu Sans Mono 12', 'Ubuntu Sans Mono 13'))
