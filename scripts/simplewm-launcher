@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+font=$(printf '%s' "${SIMPLEWM_FONT:-Ubuntu Sans 11}" | sed -E 's/ ([0-9]+(\.[0-9]+)?)$/:size=\1/')
+config=${XDG_CONFIG_HOME:-$HOME/.config}/simplewm/fuzzel.ini
+if [ -f "$config" ]; then
+    exec fuzzel --config "$config" --prompt 'Run  '
+fi
+exec fuzzel --font "$font" --width 42 --lines 9 --prompt 'Run  ' \
+    --background-color 101313ee --text-color e6e7e1ff --match-color d3a175ff \
+    --selection-color 343d3bff --selection-text-color e6e7e1ff \
+    --border-color 92a58eff --border-width 1 --border-radius 8

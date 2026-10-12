@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+# Restore the configured outputs and their modes/scales after idle sleep.
+exec simplewmctl reload

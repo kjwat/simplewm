@@ -1,0 +1,584 @@
+#!/usr/bin/python3
+"""Wallpaper and palette portions of Keelan's wallpaper-theme-dwm.sh, adapted
+for SimpleWM. The original palette and legibility rules are retained. Fonts
+are managed exclusively by SimpleWM's config; this tool never installs fonts.
+"""
+from __future__ import annotations
+import argparse
+import colorsys
+import configparser
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import random
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from PIL import Image, ImageOps
+HOME=Path.home()
+CONFIG=Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config'))
+DATA=Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share'))
+STATE=Path(os.environ.get('XDG_STATE_HOME', HOME / '.local/state')) / 'simplewm-theme'
+FOREGROUND_LUMINANCE_THRESHOLD=math.sqrt(0.05 * 1.05) - 0.05
+
+def atomic_write(path: Path, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.'+path.name, delete=False) as out:
+        out.write(contents)
+        temporary=Path(out.name)
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+def backup_once(path: Path) -> None:
+    backup=STATE / 'previous'
+    backup.mkdir(parents=True, exist_ok=True)
+    index=backup / 'files.json'
+    records=json.loads(index.read_text()) if index.exists() else {}
+    name=str(path)
+    if name in records:
+        return
+    key=hashlib.sha256(name.encode()).hexdigest()
+    records[name]=key if path.exists() else None
+    if path.exists():
+        shutil.copy2(path,backup / key)
+    atomic_write(index,json.dumps(records,indent=2))
+
+def unique_paths(paths):
+    return list(dict.fromkeys(paths))
+
+# Palette functions retained from wallpaper-theme 3.8.
+def quantize(pixels: list[tuple[int, int, int]], count: int = 12) -> list[tuple[tuple[int, int, int], int]]:
+    bins: dict[tuple[int, int, int], int] = {}
+    for red, green, blue in pixels:
+        key = (red // 8 * 8 + 4, green // 8 * 8 + 4, blue // 8 * 8 + 4)
+        bins[key] = bins.get(key, 0) + 1
+    points = list(bins)
+    weights = [bins[point] for point in points]
+    if not points:
+        raise SystemExit("wallpaper-theme: wallpaper has no opaque pixels")
+    if len(points) <= count:
+        return sorted(zip(points, weights), key=lambda item: item[1], reverse=True)
+    rng = random.Random(0xD00D)
+    centroids: list[tuple[float, float, float]] = [tuple(map(float, points[weights.index(max(weights))]))]
+    while len(centroids) < count:
+        scores = []
+        for point, weight in zip(points, weights):
+            distance = min(sum((point[channel] - center[channel]) ** 2 for channel in range(3)) for center in centroids)
+            scores.append(distance * math.sqrt(weight))
+        target = rng.random() * sum(scores)
+        running = 0.0
+        selected = points[-1]
+        for point, score in zip(points, scores):
+            running += score
+            if running >= target:
+                selected = point
+                break
+        centroids.append(tuple(map(float, selected)))
+    cluster_weights = [0] * count
+    for _ in range(18):
+        cluster_weights = [0] * count
+        sums = [[0.0, 0.0, 0.0] for _ in range(count)]
+        for point, weight in zip(points, weights):
+            cluster = min(range(count), key=lambda candidate: sum((point[channel] - centroids[candidate][channel]) ** 2 for channel in range(3)))
+            cluster_weights[cluster] += weight
+            for channel in range(3):
+                sums[cluster][channel] += point[channel] * weight
+        updated = [tuple(value / cluster_weights[cluster] for value in sums[cluster]) if cluster_weights[cluster] else centroids[cluster] for cluster in range(count)]
+        movement = sum(sum((centroids[i][c] - updated[i][c]) ** 2 for c in range(3)) for i in range(count))
+        centroids = updated
+        if movement < 1.0:
+            break
+    result = [(tuple(round(channel) for channel in center), weight) for center, weight in zip(centroids, cluster_weights) if weight]
+    return sorted(result, key=lambda item: item[1], reverse=True)
+
+def luminance(color: tuple[int, int, int]) -> float:
+    channels = []
+    for value in color:
+        channel = value / 255
+        channels.append(channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+def binary_foreground(perceived_luminance: float) -> tuple[int, int, int]:
+    """Choose the higher-contrast binary foreground for one luminance value."""
+    # Black and white have equal WCAG contrast at this relative luminance.
+    return (
+        (0, 0, 0)
+        if perceived_luminance > FOREGROUND_LUMINANCE_THRESHOLD
+        else (255, 255, 255)
+    )
+
+def terminal_foreground(background: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Keep terminal text on the existing adaptive black/white policy."""
+    return binary_foreground(luminance(background))
+
+def palette_luminance(clusters: list[tuple[tuple[int, int, int], int]]) -> float:
+    """Return the pixel-weighted luminance of the complete extracted palette."""
+    total_weight = sum(weight for _, weight in clusters)
+    if not total_weight:
+        raise SystemExit("wallpaper-theme: wallpaper palette has no weight")
+    return sum(luminance(color) * weight for color, weight in clusters) / total_weight
+
+def palette_foreground(clusters: list[tuple[tuple[int, int, int], int]]) -> tuple[int, int, int]:
+    """Choose one foreground for the whole UI from the overall palette."""
+    return binary_foreground(palette_luminance(clusters))
+
+def saturation(color: tuple[int, int, int]) -> float:
+    return colorsys.rgb_to_hsv(*(channel / 255 for channel in color))[1]
+
+def mix(first: tuple[int, int, int], second: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
+    return tuple(round(a * (1 - amount) + b * amount) for a, b in zip(first, second))
+
+def contrast_ratio(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+    lighter, darker = sorted((luminance(first), luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+def mix_until_contrast(
+    color: tuple[int, int, int],
+    against: tuple[int, int, int],
+    toward: tuple[int, int, int],
+    minimum: float,
+) -> tuple[int, int, int]:
+    """Make the smallest blend toward an endpoint that reaches a contrast target."""
+    if contrast_ratio(color, against) >= minimum:
+        return color
+    if contrast_ratio(toward, against) < minimum:
+        return toward
+    low, high = 0.0, 1.0
+    for _ in range(18):
+        middle = (low + high) / 2
+        if contrast_ratio(mix(color, toward, middle), against) >= minimum:
+            high = middle
+        else:
+            low = middle
+    return mix(color, toward, high)
+
+def hexcolor(color: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*color)
+
+def choose_colors(clusters: list[tuple[tuple[int, int, int], int]]) -> dict[str, tuple[int, int, int]]:
+    colors = [color for color, _ in clusters]
+    maximum_weight = max(weight for _, weight in clusters)
+    dark = min(colors, key=lambda color: luminance(color) + saturation(color) * 0.025)
+    background = mix(dark, (0, 0, 0), 0.18)
+    # This desktop theme is deliberately dark.  Very bright/flat wallpapers may
+    # contain no dark cluster, so progressively tint the base instead of pairing
+    # black text with a background that only happened to be selected as "darkest".
+    while luminance(background) > 0.018:
+        background = mix(background, (0, 0, 0), 0.12)
+    foreground = terminal_foreground(background)
+    light_candidates = [color for color in colors if luminance(color) > 0.38]
+    if light_candidates:
+        palette_light = max(light_candidates, key=lambda color: luminance(color) - saturation(color) * 0.18)
+        palette_light = mix(palette_light, (245, 247, 244), 0.35)
+    else:
+        palette_light = (225, 230, 225)
+    candidates = []
+    for color, weight in clusters:
+        light = luminance(color)
+        sat = saturation(color)
+        hue = colorsys.rgb_to_hsv(*(channel / 255 for channel in color))[0]
+        if 0.035 < light < 0.68 and sat > 0.12:
+            score = sat * 0.62 + min(light, 0.32) * 0.34 + (weight / maximum_weight) * 0.18
+            if 0.015 < hue < 0.12 and 0.15 < sat < 0.68:
+                score *= 0.36
+            candidates.append((score, color))
+    accent = max(candidates)[1] if candidates else mix(palette_light, background, 0.45)
+    surface = mix(background, palette_light, 0.075)
+    surface2 = mix(background, palette_light, 0.14)
+    muted = mix(palette_light, background, 0.43)
+    accent = mix_until_contrast(accent, background, palette_light, 3.05)
+    accent = mix_until_contrast(accent, foreground, background, 4.55)
+    accent_hover = mix(accent, palette_light, 0.18)
+    accent_hover = mix_until_contrast(accent_hover, foreground, background, 4.55)
+    error_candidates = [
+        color for color in colors
+        if colorsys.rgb_to_hsv(*(channel / 255 for channel in color))[0] < 0.10
+        and saturation(color) > 0.22 and luminance(color) > 0.08
+    ]
+    error = max(error_candidates, key=saturation) if error_candidates else (190, 92, 92)
+    error = mix_until_contrast(error, foreground, background, 4.55)
+    return {
+        "background": background, "surface": surface, "surface2": surface2,
+        "foreground": foreground, "muted": muted,
+        "_palette_light": palette_light, "accent": accent,
+        "accent_hover": accent_hover, "accent_fg": foreground,
+        "error": error,
+    }
+
+def validate_foreground_invariant(
+    theme: dict[str, tuple[int, int, int]],
+    clusters: list[tuple[tuple[int, int, int], int]],
+) -> None:
+    """Require readable dark-theme surfaces and a coherent binary foreground."""
+    if not clusters:
+        raise SystemExit("wallpaper-theme: cannot validate an empty wallpaper palette")
+    foreground = theme["foreground"]
+    if foreground not in ((0, 0, 0), (255, 255, 255)):
+        raise SystemExit("wallpaper-theme: global UI foreground is not pure black or white")
+    if foreground != terminal_foreground(theme["background"]) or theme["accent_fg"] != foreground:
+        raise SystemExit("wallpaper-theme: global UI foreground invariant was violated")
+    if contrast_ratio(theme["background"], foreground) < 4.5:
+        raise SystemExit("wallpaper-theme: background/foreground contrast is too low")
+    if contrast_ratio(theme["accent"], theme["background"]) < 3.0:
+        raise SystemExit("wallpaper-theme: accent/background contrast is too low")
+    if contrast_ratio(theme["accent"], theme["accent_fg"]) < 4.5:
+        raise SystemExit("wallpaper-theme: accent text contrast is too low")
+
+def gtk_css(theme: dict[str, tuple[int, int, int]]) -> str:
+    c = {name: hexcolor(value) for name, value in theme.items()}
+    return f"""/* Generated by wallpaper-theme. */
+@define-color theme_bg_color {c['background']};
+@define-color theme_fg_color {c['foreground']};
+@define-color theme_base_color {c['background']};
+@define-color theme_text_color {c['foreground']};
+@define-color theme_selected_bg_color {c['accent']};
+@define-color theme_selected_fg_color {c['accent_fg']};
+@define-color insensitive_bg_color {c['surface']};
+@define-color insensitive_fg_color {c['foreground']};
+@define-color borders {c['surface2']};
+@define-color warning_color {c['foreground']};
+@define-color error_color {c['foreground']};
+@define-color success_color {c['foreground']};
+@define-color accent_color {c['accent']};
+@define-color accent_bg_color {c['accent']};
+@define-color accent_fg_color {c['accent_fg']};
+@define-color destructive_color {c['foreground']};
+@define-color destructive_bg_color {c['error']};
+@define-color destructive_fg_color {c['foreground']};
+@define-color window_bg_color {c['background']};
+@define-color window_fg_color {c['foreground']};
+@define-color view_bg_color {c['background']};
+@define-color view_fg_color {c['foreground']};
+@define-color headerbar_bg_color {c['surface']};
+@define-color headerbar_fg_color {c['foreground']};
+@define-color card_bg_color {c['surface']};
+@define-color card_fg_color {c['foreground']};
+@define-color popover_bg_color {c['surface']};
+@define-color popover_fg_color {c['foreground']};
+
+* {{ color: {c['foreground']}; caret-color: {c['accent_hover']}; }}
+window, dialog, .background {{ background-color: {c['background']}; color: {c['foreground']}; }}
+.view, textview text, treeview.view, iconview, list, row {{ background-color: {c['background']}; color: {c['foreground']}; }}
+headerbar, .titlebar, menubar, toolbar, .toolbar {{ background-color: {c['surface']}; color: {c['foreground']}; border-color: {c['surface2']}; }}
+button {{ background: {c['surface2']}; color: {c['foreground']}; border: 1px solid {c['surface2']}; border-radius: 5px; }}
+button:hover {{ background: {c['accent_hover']}; color: {c['foreground']}; border-color: {c['accent_hover']}; }}
+button:active, button:checked, button.suggested-action {{ background: {c['accent']}; color: {c['accent_fg']}; border-color: {c['accent']}; }}
+button:disabled {{ background: {c['surface']}; color: {c['foreground']}; }}
+entry, spinbutton, combobox box, textview {{ background-color: {c['surface']}; color: {c['foreground']}; border-color: {c['surface2']}; border-radius: 4px; }}
+entry:focus, spinbutton:focus {{ border-color: {c['accent']}; box-shadow: inset 0 0 0 1px {c['accent']}; }}
+selection, *:selected {{ background-color: {c['accent']}; color: {c['accent_fg']}; }}
+popover, popover.background, menu, .menu {{ background-color: {c['surface']}; color: {c['foreground']}; border-color: {c['surface2']}; }}
+menuitem:hover, modelbutton:hover, row:hover {{ background-color: {c['surface2']}; color: {c['foreground']}; }}
+notebook > header, notebook > header > tabs {{ background-color: {c['surface']}; color: {c['foreground']}; }}
+notebook > stack, notebook > stack:not(:only-child) {{ background-color: {c['background']}; }}
+notebook > header.top > tabs > tab:checked {{ color: {c['foreground']}; border-color: {c['accent']}; box-shadow: inset 0 -4px {c['accent']}; }}
+switch, scale > trough, progressbar > trough {{ background-color: {c['surface2']}; }}
+switch:checked, progressbar > trough > progress, scale > trough > highlight {{ background-color: {c['accent']}; border-color: {c['accent']}; }}
+scrollbar slider {{ background-color: {c['muted']}; border-radius: 8px; min-width: 8px; min-height: 8px; }}
+scrollbar slider:hover {{ background-color: {c['accent_hover']}; }}
+tooltip, tooltip.background {{ background-color: {c['surface2']}; color: {c['foreground']}; }}
+link, .link {{ color: {c['foreground']}; }}
+button.link {{ color: {c['foreground']}; }}
+separator {{ background-color: {c['surface2']}; }}
+"""
+
+def terminal_ansi_palette(theme: dict[str, tuple[int, int, int]]) -> list[str]:
+    """Keep terminal semantics while replacing distro-blue with the wallpaper accent."""
+    colors = (
+        theme["surface2"], theme["error"], theme["accent"], theme["accent_hover"],
+        theme["accent"], theme["accent"], theme["accent_hover"], theme["foreground"],
+        theme["muted"], theme["error"], theme["accent"], theme["accent_hover"],
+        theme["accent"], theme["accent_hover"], theme["accent_hover"], theme["foreground"],
+    )
+    return [hexcolor(color) for color in colors]
+
+def firefox_profile_dirs() -> list[Path]:
+    """Return declared Firefox profiles without guessing from cache directories."""
+    roots = [HOME / ".mozilla/firefox", HOME / ".mozilla/firefox-esr"]
+    profiles: list[Path] = []
+    for root in roots:
+        profiles_ini = root / "profiles.ini"
+        if not profiles_ini.is_file():
+            continue
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(profiles_ini, encoding="utf-8")
+        except (OSError, configparser.Error):
+            continue
+        for section in parser.sections():
+            if not section.startswith("Profile") or not parser.has_option(section, "Path"):
+                continue
+            candidate = Path(parser.get(section, "Path")).expanduser()
+            if parser.getboolean(section, "IsRelative", fallback=True):
+                candidate = root / candidate
+            if candidate.is_dir():
+                profiles.append(candidate)
+    return unique_paths(profiles)
+
+def set_firefox_user_pref(path: Path, name: str, value: str) -> None:
+    line = f'user_pref({json.dumps(name)}, {value});'
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    pattern = re.compile(
+        rf'^\s*user_pref\(\s*{re.escape(json.dumps(name))}\s*,.*?\);\s*$',
+        re.MULTILINE,
+    )
+    if pattern.search(text):
+        updated = pattern.sub(line, text)
+    else:
+        updated = text + ("" if not text or text.endswith("\n") else "\n") + line + "\n"
+    if updated != text:
+        backup_once(path)
+        atomic_write(path, updated)
+
+def write_firefox(theme: dict[str, tuple[int, int, int]]) -> int:
+    """Install live system-color Firefox chrome rules; first use needs a restart."""
+    c = {name: hexcolor(value) for name, value in theme.items()}
+    css = f'''/* Generated by wallpaper-theme. Do not edit by hand.
+ * Last generated palette: background {c['background']}, foreground {c['foreground']},
+ * accent {c['accent']}.  Rules use live system colors so future wallpaper-theme
+ * runs propagate through GTK without requiring another Firefox restart. */
+:root {{
+  --wallpaper-theme-background: Canvas;
+  --wallpaper-theme-surface: color-mix(in srgb, CanvasText 7.5%, Canvas);
+  --wallpaper-theme-surface-2: color-mix(in srgb, CanvasText 14%, Canvas);
+  --wallpaper-theme-foreground: CanvasText;
+  --wallpaper-theme-accent: AccentColor;
+  --wallpaper-theme-accent-foreground: AccentColorText;
+  --focus-outline-color: var(--wallpaper-theme-accent) !important;
+  --toolbar-bgcolor: var(--wallpaper-theme-surface) !important;
+  --toolbar-color: var(--wallpaper-theme-foreground) !important;
+  --toolbar-field-background-color: var(--wallpaper-theme-background) !important;
+  --toolbar-field-color: var(--wallpaper-theme-foreground) !important;
+  --toolbar-field-border-color: var(--wallpaper-theme-surface-2) !important;
+  --toolbar-field-focus-background-color: var(--wallpaper-theme-background) !important;
+  --toolbar-field-focus-color: var(--wallpaper-theme-foreground) !important;
+  --toolbar-field-focus-border-color: var(--wallpaper-theme-accent) !important;
+  --toolbarbutton-icon-fill-attention: var(--wallpaper-theme-accent) !important;
+  --urlbarView-highlight-background: var(--wallpaper-theme-accent) !important;
+  --urlbarView-highlight-color: var(--wallpaper-theme-accent-foreground) !important;
+  --tab-selected-bgcolor: var(--wallpaper-theme-surface-2) !important;
+  --lwt-accent-color: var(--wallpaper-theme-background) !important;
+  --lwt-text-color: var(--wallpaper-theme-foreground) !important;
+  accent-color: var(--wallpaper-theme-accent) !important;
+}}
+
+#navigator-toolbox,
+#TabsToolbar,
+#nav-bar,
+#PersonalToolbar {{
+  background-color: var(--wallpaper-theme-surface) !important;
+  color: var(--wallpaper-theme-foreground) !important;
+}}
+
+#urlbar-background,
+#searchbar {{
+  background-color: var(--wallpaper-theme-background) !important;
+  color: var(--wallpaper-theme-foreground) !important;
+  border-color: var(--wallpaper-theme-surface-2) !important;
+}}
+
+#urlbar[focused] > #urlbar-background,
+#urlbar[open] > #urlbar-background,
+#searchbar:focus-within {{
+  border-color: var(--wallpaper-theme-accent) !important;
+  outline: 1px solid var(--wallpaper-theme-accent) !important;
+  outline-offset: -1px !important;
+  box-shadow: 0 0 0 1px var(--wallpaper-theme-accent) !important;
+}}
+
+.tabbrowser-tab[selected] .tab-background {{
+  background-color: var(--wallpaper-theme-surface-2) !important;
+  box-shadow: inset 0 -2px var(--wallpaper-theme-accent) !important;
+}}
+
+#urlbarView .urlbarView-row[selected] > .urlbarView-row-inner {{
+  background-color: var(--wallpaper-theme-accent) !important;
+  color: var(--wallpaper-theme-accent-foreground) !important;
+}}
+'''
+    count = 0
+    import_line = '@import url("wallpaper-theme.css");'
+    for profile in firefox_profile_dirs():
+        chrome = profile / "chrome"
+        generated = chrome / "wallpaper-theme.css"
+        if generated.exists():
+            existing = generated.read_text(encoding="utf-8", errors="replace")
+            if not existing.startswith("/* Generated by wallpaper-theme."):
+                print(
+                    f"wallpaper-theme: warning: refusing unrelated Firefox CSS: {generated}",
+                    file=sys.stderr,
+                )
+                continue
+        backup_once(generated)
+        atomic_write(generated, css)
+        user_chrome = chrome / "userChrome.css"
+        text = user_chrome.read_text(encoding="utf-8") if user_chrome.exists() else ""
+        if import_line not in text:
+            backup_once(user_chrome)
+            atomic_write(user_chrome, import_line + "\n" + text)
+        set_firefox_user_pref(
+            profile / "user.js",
+            "toolkit.legacyUserProfileCustomizations.stylesheets",
+            "true",
+        )
+        count += 1
+    return count
+
+def refresh():
+    if os.environ.get('SIMPLEWM_SOCKET'):
+        result=subprocess.run(['simplewmctl','reload'],capture_output=True,text=True)
+        if result.returncode:
+            raise RuntimeError(result.stdout or result.stderr)
+    if os.environ.get('DISPLAY'):
+        resources=CONFIG / 'simplewm/colors.Xresources'
+        if resources.exists():
+            subprocess.run(['xrdb','-merge',str(resources)],check=False)
+
+def rollback():
+    backup=STATE / 'previous'
+    index=backup / 'files.json'
+    if not index.exists():
+        raise RuntimeError('no previous theme to restore')
+    for name,key in json.loads(index.read_text()).items():
+        path=Path(name)
+        if key is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(backup / key,path)
+    refresh()
+    print('Previous wallpaper and colors restored.')
+
+def apply_image(source, mode, wallpaper_only=False):
+    source=Path(source).expanduser().resolve(strict=True)
+    with Image.open(source) as image:
+        if image.width*image.height>42_000_000:
+            raise RuntimeError('wallpaper exceeds the 42 megapixel limit')
+        image=ImageOps.exif_transpose(image).convert('RGB')
+        image.thumbnail((10000,10000),Image.Resampling.LANCZOS)
+        clusters=quantize(list(image.resize((96,96)).getdata()))
+        theme=choose_colors(clusters)
+        validate_foreground_invariant(theme,clusters)
+        state=STATE / 'previous'
+        if state.exists():
+            shutil.rmtree(state)
+        current=DATA / 'wallpapers/current.png'
+        backup_once(current)
+        current.parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=current.parent,suffix='.png',delete=False) as temp:
+            temporary=Path(temp.name)
+        image.save(temporary,'PNG')
+        temporary.chmod(0o600)
+        temporary.replace(current)
+    config=CONFIG / 'simplewm/config'
+    if not config.exists():
+        config.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copy2('/usr/local/share/simplewm/config',config)
+    backup_once(config)
+    palette=CONFIG / 'simplewm/palette.conf'
+    backup_once(palette)
+    previous=palette.read_text() if palette.exists() else ''
+    lines=['# Generated by simplewm-theme; fonts remain in the main config.',
+           'background '+json.dumps(str(current),ensure_ascii=False)+' '+mode]
+    if wallpaper_only:
+        lines.extend(line for line in previous.splitlines() if line.startswith('color '))
+    if not wallpaper_only:
+        for name,key in [('background','background'),('inactive','surface2'),('focused','accent'),('urgent','error')]:
+            lines.append('color '+name+' '+hexcolor(theme[key]))
+    atomic_write(palette,'\n'.join(lines)+'\n')
+    include='include palette.conf'
+    text=config.read_text()
+    if include not in text.splitlines():
+        atomic_write(config,text.rstrip()+'\n\n'+include+'\n')
+    check=subprocess.run(['simplewm','--check-config','-c',str(config)],capture_output=True,text=True)
+    if check.returncode:
+        rollback()
+        raise RuntimeError(check.stderr)
+    if not wallpaper_only:
+        ansi=terminal_ansi_palette(theme)
+        ini=CONFIG / 'simpleterm/settings.ini'
+        backup_once(ini)
+        term=configparser.ConfigParser(interpolation=None)
+        if ini.exists():
+            term.read(ini)
+        if 'Colors' not in term:
+            term['Colors']={}
+        def rgb(color): return 'rgb('+','.join(str(v) for v in color)+')'
+        term['Colors'].update({'use-theme-colors':'false','foreground':rgb(theme['foreground']),
+            'background':rgb(theme['background']),'custom-cursor':'true','cursor':rgb(theme['accent']),
+            'cursor-foreground':rgb(theme['accent_fg']),'custom-highlight':'true',
+            'highlight':rgb(theme['accent']),'highlight-foreground':rgb(theme['accent_fg'])})
+        for index,color in enumerate(ansi):
+            term['Colors'][f'palette-{index}']=rgb(tuple(int(color[o:o+2],16) for o in (1,3,5)))
+        import io
+        out=io.StringIO(); term.write(out); atomic_write(ini,out.getvalue())
+        for toolkit in ('gtk-3.0','gtk-4.0'):
+            css=CONFIG / toolkit / 'simplewm-palette.css'
+            backup_once(css); atomic_write(css,gtk_css(theme))
+            user=CONFIG / toolkit / 'gtk.css'
+            backup_once(user)
+            text=user.read_text() if user.exists() else ''
+            include='@import url("simplewm-palette.css");'
+            if include not in text:
+                atomic_write(user,include+'\n'+text)
+        fuzzel=CONFIG / 'simplewm/fuzzel.ini'
+        backup_once(fuzzel)
+        launcher=configparser.ConfigParser(interpolation=None)
+        if fuzzel.exists(): launcher.read(fuzzel)
+        if 'main' not in launcher:
+            font=re.sub(r' ([0-9]+(?:\.[0-9]+)?)$',r':size=\1',os.environ.get('SIMPLEWM_FONT','Ubuntu Sans 11'))
+            launcher['main']={'font':font,'width':'42','lines':'9'}
+        launcher['colors']={
+            'background':hexcolor(theme['background'])[1:]+'ee','text':hexcolor(theme['foreground'])[1:]+'ff',
+            'match':hexcolor(theme['accent_hover'])[1:]+'ff','selection':hexcolor(theme['accent'])[1:]+'ff',
+            'selection-text':hexcolor(theme['foreground'])[1:]+'ff','border':hexcolor(theme['accent'])[1:]+'ff'}
+        out=io.StringIO(); launcher.write(out); atomic_write(fuzzel,out.getvalue())
+        resources=CONFIG / 'simplewm/colors.Xresources'
+        backup_once(resources)
+        lines=[f'*.background: {hexcolor(theme["background"])}',f'*.foreground: {hexcolor(theme["foreground"])}',
+               f'*.cursorColor: {hexcolor(theme["accent"])}']
+        lines.extend(f'*.color{i}: {color}' for i,color in enumerate(ansi))
+        atomic_write(resources,'\n'.join(lines)+'\n')
+        write_firefox(theme)
+        palette_json=CONFIG / 'simplewm/palette.json'
+        backup_once(palette_json); atomic_write(palette_json,json.dumps({k:hexcolor(v) for k,v in theme.items()}))
+    refresh()
+    print(f'Wallpaper: {source}\nMode: {mode}\nAccent: {hexcolor(theme["accent"])}')
+    print('SimpleWM, GTK, launcher, Simpleterm, Xwayland, and existing Firefox profiles use the palette.')
+    print('Reopen Simpleterm and Firefox for their first palette change. Fonts are preserved. Undo: wallpaper-theme --rollback')
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('image',nargs='?')
+    parser.add_argument('--mode',choices=['fit','fill','center','stretch','tile'],default='fit')
+    parser.add_argument('--wallpaper-only',action='store_true')
+    parser.add_argument('--wizard',action='store_true')
+    parser.add_argument('--rollback',action='store_true')
+    parser.add_argument('--startup',action='store_true')
+    parser.add_argument('--doctor',action='store_true')
+    parser.add_argument('--version',action='version',version='wallpaper-theme SimpleWM 1.0 (palette engine 3.8)')
+    args=parser.parse_args()
+    if args.rollback:
+        rollback(); return
+    if args.startup:
+        refresh(); return
+    if args.doctor:
+        missing=[p for p in ['simplewm','simplewmctl','swaybg'] if not shutil.which(p)]
+        if missing: raise RuntimeError('missing: '+', '.join(missing))
+        print('OK SimpleWM, wallpaper setter, Pillow, and palette engine'); return
+    if args.wizard or not args.image:
+        args.image=input('Wallpaper image (path): ').strip()
+        args.mode=input(f'Mode: fit / fill / center / stretch / tile [{args.mode}]: ').strip() or args.mode
+        if args.mode not in ('fit','fill','center','stretch','tile'): raise RuntimeError('invalid display mode')
+    if not args.image: return
+    apply_image(args.image,args.mode,args.wallpaper_only)
+
+if __name__=='__main__':
+    try:
+        main()
+    except (OSError,RuntimeError,ValueError,Image.DecompressionBombError,subprocess.CalledProcessError) as error:
+        sys.exit(f'wallpaper-theme: {error}')

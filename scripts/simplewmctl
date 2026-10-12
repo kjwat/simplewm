@@ -1,0 +1,38 @@
+#!/usr/bin/python3
+"""One request to SimpleWM; no resident process or third-party modules."""
+import json
+import os
+import socket
+import sys
+
+args = sys.argv[1:]
+endpoint = os.environ.get('SIMPLEWM_SOCKET')
+if args[:1] == ['--socket'] and len(args) >= 2:
+    endpoint = args[1]
+    args = args[2:]
+if not endpoint:
+    runtime = os.environ.get('XDG_RUNTIME_DIR', '')
+    display = os.environ.get('WAYLAND_DISPLAY', '')
+    if runtime and display:
+        endpoint = f'{runtime}/simplewm-{display}.ctl'
+if not endpoint or not args:
+    sys.exit('Usage: simplewmctl [--socket PATH] status|reload|workspace N|COMMAND [ARG]')
+try:
+    with socket.socket(socket.AF_UNIX) as client:
+        client.settimeout(5)
+        client.connect(endpoint)
+        request = ' '.join(args)
+        if '\n' in request or len(request.encode()) > 8000:
+            sys.exit('Command too long or contains a newline')
+        client.sendall((request + '\n').encode())
+        chunks = []
+        while True:
+            data = client.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+    response = json.loads(b''.join(chunks))
+    print(json.dumps(response, ensure_ascii=False, indent=2))
+    sys.exit(0 if response.get('ok') else 1)
+except (OSError, ValueError) as error:
+    sys.exit(f'SimpleWM: {error}')

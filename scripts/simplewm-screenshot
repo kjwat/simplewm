@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+folder=${XDG_PICTURES_DIR:-$HOME/Pictures}/Screenshots
+mkdir -p "$folder"
+target=$folder/$(date +%Y-%m-%d_%H-%M-%S).png
+if [ "${1:-}" = region ]; then
+    region=$(slurp) || exit 0
+    grim -g "$region" "$target"
+else
+    grim "$target"
+fi
+wl-copy --type image/png < "$target"

@@ -1,0 +1,56 @@
+#!/usr/bin/python3
+"""Apply configured toolkit fonts on startup/reload, then exit."""
+import configparser
+import os
+from pathlib import Path
+import subprocess
+from xml.sax.saxutils import escape
+
+root = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
+font = os.environ.get('SIMPLEWM_FONT', 'Ubuntu Sans 11')
+mono = os.environ.get('SIMPLEWM_MONO_FONT', 'Ubuntu Sans Mono 13')
+theme = os.environ.get('SIMPLEWM_GTK_THEME', 'Yaru-red-dark')
+hint = os.environ.get('SIMPLEWM_FONT_HINTING', 'slight')
+rgba = os.environ.get('SIMPLEWM_FONT_RGBA', 'rgb')
+cursor = os.environ.get('XCURSOR_THEME', 'Yaru')
+size = os.environ.get('XCURSOR_SIZE', '24')
+settings = root / 'gtk-3.0/settings.ini'
+cfg = configparser.ConfigParser(interpolation=None)
+cfg.optionxform = str
+if settings.exists():
+    cfg.read(settings)
+if 'Settings' not in cfg:
+    cfg['Settings'] = {}
+cfg['Settings'].update({
+    'gtk-font-name': font, 'gtk-theme-name': theme, 'gtk-application-prefer-dark-theme': '1',
+    'gtk-cursor-theme-name': cursor, 'gtk-cursor-theme-size': size,
+    'gtk-xft-antialias': '1', 'gtk-xft-hinting': '0' if hint == 'none' else '1',
+    'gtk-xft-hintstyle': 'hint' + hint, 'gtk-xft-rgba': rgba,
+})
+settings.parent.mkdir(parents=True, exist_ok=True)
+with settings.with_suffix('.tmp').open('w') as out:
+    cfg.write(out)
+settings.with_suffix('.tmp').replace(settings)
+conf = root / 'fontconfig/conf.d/65-simplewm.conf'
+conf.parent.mkdir(parents=True, exist_ok=True)
+conf.write_text(f'''<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig><match target="font">
+<edit name="antialias" mode="assign"><bool>true</bool></edit>
+<edit name="hintstyle" mode="assign"><const>hint{escape(hint)}</const></edit>
+<edit name="rgba" mode="assign"><const>{escape(rgba)}</const></edit>
+<edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>
+</match></fontconfig>
+''')
+for key, value in {
+    'font-name': font, 'document-font-name': font, 'monospace-font-name': mono,
+    'gtk-theme': theme, 'cursor-theme': cursor, 'cursor-size': size,
+    'color-scheme': 'prefer-dark', 'font-hinting': hint,
+    'font-rgba-order': rgba if rgba != 'none' else 'rgb',
+    'font-antialiasing': 'grayscale' if rgba == 'none' else 'rgba',
+}.items():
+    try:
+        subprocess.run(['gsettings', 'set', 'org.gnome.desktop.interface', key, value],
+                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        pass

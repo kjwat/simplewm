@@ -1,0 +1,19 @@
+#!/bin/sh
+set -u
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY SIMPLEWM_SOCKET \
+    XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION \
+    XCURSOR_THEME XCURSOR_SIZE MOZ_ENABLE_WAYLAND 2>/dev/null || true
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY SIMPLEWM_SOCKET \
+    XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION 2>/dev/null || true
+systemctl --user start --no-block pipewire.socket pipewire-pulse.socket wireplumber.service 2>/dev/null || true
+gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1 || true
+for agent in /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \
+    /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
+    /usr/libexec/polkit-mate-authentication-agent-1; do
+    if [ -x "$agent" ]; then "$agent" >/dev/null 2>&1 & break; fi
+done
+# Idle inhibition (e.g. Firefox playing video) is honored by the compositor.
+# No bar, status poller, notification daemon, or background updater.
+exec swayidle -w timeout 900 'simplewm-lock' \
+    timeout 1200 'wlopm --off "*"' \
+    resume 'wlopm --on "*"' before-sleep 'simplewm-lock'

@@ -1,0 +1,434 @@
+#!/usr/bin/python3
+"""APT plus tested, staged updates of official SimpleSuite and SimpleWM."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+OFFICIAL = 'https://github.com/kjwat/simplesuite.git'
+OFFICIAL_WM = 'https://github.com/kjwat/simplewm.git'
+PREFIX = Path('/usr/local')
+LOG_STREAM = None
+MANIFEST = PREFIX / 'share/simplesuite/install-manifest'
+WM_MANIFEST = PREFIX / 'share/simplewm/install-manifest'
+WM_SOURCE = PREFIX / 'share/simplewm/source'
+SOURCE_TREES = (Path('share/simplesuite/source'), Path('share/simplewm/source'))
+BUILD_PACKAGES = [
+    'build-essential', 'pkg-config', 'git', 'ca-certificates', 'libncurses-dev',
+    'libcurl4-openssl-dev', 'libssl-dev', 'libavahi-client-dev', 'libnm-dev',
+    'libgtk-3-dev', 'libvte-2.91-dev', 'libpcre2-dev', 'python3', 'python3-gi',
+    'python3-dbus', 'gir1.2-gtk-3.0', 'gir1.2-vte-2.91', 'gir1.2-webkit2-4.1',
+    'python3-cairo', 'dbus-x11', 'xvfb', 'xauth', 'openbox', 'xdotool',
+]
+WM_BUILD_PACKAGES = [
+    'build-essential', 'pkg-config', 'git', 'ca-certificates', 'libwlroots-0.18-dev',
+    'libwayland-dev', 'wayland-protocols', 'libxkbcommon-dev', 'libinput-dev',
+    'libxcb-icccm4-dev', 'python3-gi', 'gir1.2-gtk-3.0', 'python3-pil',
+    'swaybg', 'swayidle', 'swaylock', 'wtype', 'grim', 'wl-clipboard', 'xwayland',
+    'dbus-x11',
+]
+
+def say(message):
+    print(f'simpleupdate: {message}', flush=True)
+    if LOG_STREAM is not None:
+        LOG_STREAM.write(f'simpleupdate: {message}\n')
+        LOG_STREAM.flush()
+
+def run(args, **kwargs):
+    if LOG_STREAM is not None and not kwargs.get('capture_output'):
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, errors='replace', **kwargs)
+        for line in process.stdout:
+            print(line, end='', flush=True)
+            LOG_STREAM.write(line)
+            LOG_STREAM.flush()
+        code = process.wait()
+        if code:
+            raise subprocess.CalledProcessError(code, args)
+        return subprocess.CompletedProcess(args, code)
+    return subprocess.run(args, check=True, **kwargs)
+
+def installed_revision(path=MANIFEST, key='simplesuite_source_sha'):
+    try:
+        for line in path.read_text().splitlines():
+            if line.startswith(key + '='):
+                sha = line.split('=', 1)[1]
+                return sha if re.fullmatch(r'(local-)?[0-9a-f]{40,64}', sha) else None
+    except OSError:
+        pass
+    return None
+
+def safe_environment(home):
+    # Keep neither credentials nor user Git config in a build/test environment.
+    return {
+        'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(home),
+        'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'TZ': 'UTC',
+        'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
+        'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_COUNT': '0',
+        'PYTHONDONTWRITEBYTECODE': '1',
+    }
+
+def build_identity():
+    uid = int(os.environ.get('SUDO_UID', '65534'))
+    user = pwd.getpwuid(uid)
+    if user.pw_uid == 0:
+        user = pwd.getpwnam('nobody')
+    return user.pw_uid, user.pw_gid
+
+def as_user(uid, gid):
+    def drop():
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
+        os.umask(0o022)
+    return drop
+
+def fetch_source(source, env, demote, origin=OFFICIAL):
+    git = ['git', '-c', 'http.sslVerify=true', '-c', 'http.followRedirects=false',
+           '-c', 'credential.helper=', '-c', 'core.hooksPath=/dev/null',
+           '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never']
+    opts = dict(env=env, preexec_fn=demote)
+    run(git + ['init', '--quiet', str(source)], **opts)
+    run(git + ['-C', str(source), 'remote', 'add', 'origin', origin], **opts)
+    run(git + ['-C', str(source), 'fetch', '--depth=1', '--no-tags', 'origin', 'HEAD'], **opts)
+    sha = run(git + ['-C', str(source), 'rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
+              capture_output=True, text=True, **opts).stdout.strip()
+    if not re.fullmatch(r'[0-9a-f]{40,64}', sha):
+        raise RuntimeError('Git returned an invalid revision')
+    run(git + ['-C', str(source), 'fsck', '--strict', '--no-reflogs'], **opts)
+    run(git + ['-C', str(source), 'checkout', '--quiet', '--detach', sha], **opts)
+    return sha
+
+def build_and_test(source, stage, sha, env, demote):
+    common = ['make', '-C', str(source), f'SIMPLESUITE_SOURCE_SHA={sha}',
+              'PREFIX=/usr/local', 'SIMPLESUITE_INSTALL_SIMPLESERVE=1']
+    opts = dict(env=env, preexec_fn=demote)
+    jobs = str(min(4, os.cpu_count() or 1))
+    say(f'Building {sha[:12]} in a private directory')
+    run(common + ['-j' + jobs, 'all', 'simpleterm'], **opts)
+    say('Running the upstream release gate and Simpleterm checks')
+    # Xvfb gives GUI tests a private screen and keeps them away from the user's desk.
+    run(['xvfb-run', '-a', '-s', '-screen 0 1280x800x24',
+         'dbus-run-session', '--', *common, 'release-simplewords', 'test-simpleterm'], **opts)
+    say('Staging the tested programs under /usr/local')
+    run(common + [f'DESTDIR={stage}', 'install'], **opts)
+    run(['sh', str(source / 'install-simpleterm.sh'), '--no-deps'],
+        env=env | {'DESTDIR': str(stage), 'SIMPLETERM_NONINTERACTIVE': '1'},
+        cwd=source, preexec_fn=demote)
+    local = stage / 'usr/local'
+    if installed_revision(local / 'share/simplesuite/install-manifest') != sha:
+        raise RuntimeError('staged provenance does not match the fetched commit')
+    for binary in (local / 'bin').iterdir():
+        if binary.is_file() and binary.read_bytes()[:4] == b'\x7fELF':
+            result = run(['ldd', str(binary)], capture_output=True, text=True)
+            if 'not found' in result.stdout:
+                raise RuntimeError(f'{binary.name} has missing runtime libraries')
+    snapshot = local / 'share/simplesuite/source'
+    shutil.copytree(source, snapshot, ignore=shutil.ignore_patterns('.git', 'build', '__pycache__'), symlinks=True)
+    (local / 'share/simplesuite/install-source').write_text('/usr/local/share/simplesuite/source\n')
+    # Daemon placement follows the suite's system policy, without changing units or roles.
+    daemon = local / 'bin/simpleserved'
+    if daemon.exists():
+        (local / 'sbin').mkdir(exist_ok=True)
+        shutil.copy2(daemon, local / 'sbin/simpleserved')
+        daemon.unlink()
+        daemon.symlink_to('../sbin/simpleserved')
+    return local
+
+def source_digest(source):
+    """Identify bundled/local source without trusting user-supplied version text."""
+    digest = hashlib.sha256()
+    for path in sorted(source.rglob('*')):
+        relative = path.relative_to(source)
+        if any(part in {'.git', 'build', '__pycache__'} or part.startswith('build-') for part in relative.parts):
+            continue
+        if path.is_symlink():
+            raise RuntimeError('local SimpleWM source contains a symlink')
+        if path.is_file():
+            digest.update(str(relative).encode() + b'\0' + path.read_bytes() + b'\0')
+    return 'local-' + digest.hexdigest()
+
+def wm_repository_exists():
+    # Only a confirmed 404 means "not yet published"; TLS/network/rate-limit
+    # failures are real update errors. No redirects to a moved/untrusted owner.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, newurl):
+            return None
+    request = urllib.request.Request('https://api.github.com/repos/kjwat/simplewm',
+                                     headers={'User-Agent': 'SimpleOS-simpleupdate',
+                                              'Accept': 'application/vnd.github+json'})
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
+            info = json.load(response)
+            if info.get('full_name', '').lower() != 'kjwat/simplewm':
+                raise RuntimeError('unexpected SimpleWM repository identity')
+            return True
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False
+        raise
+
+def build_and_test_wm(source, stage, sha, env, demote):
+    common = ['make', '-C', str(source), 'PREFIX=/usr/local']
+    opts = dict(env=env, preexec_fn=demote)
+    say(f'Building SimpleWM {sha[:18]}')
+    run(common + ['CFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter'], **opts)
+    for check in ('config-check.py', 'update-check.py', 'theme-check.py'):
+        run(['python3', str(source / 'tests' / check)], **opts)
+    # Virtual wlroots outputs and a private session bus never touch the desk.
+    run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)
+    run(common + [f'DESTDIR={stage}', 'install'], **opts)
+    local = stage / 'usr/local'
+    for name in ('simplewm', 'simplewmctl', 'simplewm-session', 'simpleupdate', 'wallpaper-theme'):
+        if not os.access(local / 'bin' / name, os.X_OK):
+            raise RuntimeError(f'SimpleWM staging omitted executable {name}')
+    shutil.copytree(source, local / 'share/simplewm/source',
+                    ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'), symlinks=True)
+    (local / 'share/simplewm/install-manifest').write_text(f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n')
+    result = run(['ldd', str(local / 'bin/simplewm')], capture_output=True, text=True)
+    if 'not found' in result.stdout:
+        raise RuntimeError('SimpleWM has missing runtime libraries')
+    return local
+
+def update_wm(args, work, env, demote, uid, gid, log):
+    current = installed_revision(WM_MANIFEST, 'simplewm_source_sha')
+    if not args.wm_local and not current:
+        say('SimpleWM is not installed; skipping it')
+        return
+    source = work / 'simplewm'
+    if args.wm_local:
+        original = args.wm_local.resolve()
+    elif wm_repository_exists():
+        original = None
+    else:
+        if current and not current.startswith('local-'):
+            raise RuntimeError('previously published SimpleWM repository is unavailable')
+        say(f'SimpleWM repository is not yet published: {OFFICIAL_WM}')
+        if not args.rebuild:
+            say('Bundled SimpleWM is unchanged. Local rebuild: simpleupdate --wm-only --rebuild')
+            return
+        original = WM_SOURCE
+    if original is not None:
+        if not (original / 'simplewm.c').is_file() or not (original / 'tests/session-check.py').is_file():
+            raise RuntimeError('expected a complete SimpleWM source folder')
+        source_digest(original)  # Reject symlinks before copying or following them.
+        say(f'Using explicitly selected local SimpleWM source: {original}')
+        shutil.copytree(original, source, ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'))
+        for path in [source, *source.rglob('*')]:
+            if path.is_symlink():
+                raise RuntimeError('local SimpleWM source contains a symlink')
+            os.chown(path, uid, gid)
+        sha = source_digest(source)
+    else:
+        say(f'Fetching only {OFFICIAL_WM}')
+        sha = fetch_source(source, env, demote, OFFICIAL_WM)
+    if current == sha and not args.rebuild:
+        say(f'SimpleWM {sha[:18]} is current; no build needed')
+        return
+    if args.check:
+        say(f'SimpleWM {current or "unrecorded"} -> {sha}; no installation')
+        return
+    run(['apt-get', '-y', '--no-install-recommends', 'install', *WM_BUILD_PACKAGES])
+    stage = work / 'wm-stage'
+    stage.mkdir(); os.chown(stage, uid, gid)
+    log.write(f'SimpleWM source: {OFFICIAL_WM if original is None else original}\nRevision: {sha}\n')
+    log.flush()
+    local = build_and_test_wm(source, stage, sha, env, demote)
+    install_transaction(local)
+    log.write('SimpleWM tests passed; installation committed.\n'); log.flush()
+    say('SimpleWM installed; the running session stays available until your next login')
+
+def validate_local(stage):
+    for item in stage.rglob('*'):
+        relative = item.relative_to(stage)
+        if relative.parts[0] not in {'bin', 'sbin', 'share'}:
+            raise RuntimeError(f'unexpected staged path: {relative}')
+        if item.is_symlink() and not item.resolve().is_relative_to(stage.resolve()):
+            raise RuntimeError(f'staged symlink escapes the payload: {relative}')
+        if not (item.is_file() or item.is_dir() or item.is_symlink()):
+            raise RuntimeError(f'unsupported staged file: {relative}')
+
+def write_journal(directory, value):
+    temp = directory / 'journal.tmp'
+    with temp.open('w') as out:
+        json.dump(value, out)
+        out.flush()
+        os.fsync(out.fileno())
+    temp.replace(directory / 'journal.json')
+
+def check_parents(prefix, relative):
+    parent = prefix
+    if prefix.is_symlink():
+        raise RuntimeError('install prefix is a symlink')
+    for part in relative.parts[:-1]:
+        parent /= part
+        if parent.is_symlink():
+            raise RuntimeError(f'install parent is a symlink: {parent}')
+        parent.mkdir(exist_ok=True)
+
+def recover_transaction(prefix=PREFIX):
+    directory = prefix / '.simpleupdate-transaction'
+    journal = directory / 'journal.json'
+    if not directory.exists():
+        return
+    if not journal.exists():
+        shutil.rmtree(directory)
+        return
+    state = json.loads(journal.read_text())
+    if state.get('committed'):
+        shutil.rmtree(directory)
+        return
+    say('Recovering an interrupted source installation')
+    for record in reversed(state['files']):
+        relative = Path(record['path'])
+        if relative.is_absolute() or '..' in relative.parts:
+            raise RuntimeError('invalid transaction journal path')
+        destination = prefix / relative
+        backup = directory / 'old' / relative
+        if backup.exists() or backup.is_symlink():
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            elif destination.exists() or destination.is_symlink():
+                destination.unlink()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(backup, destination)
+        elif not record['existed']:
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            elif destination.exists() or destination.is_symlink():
+                destination.unlink()
+    shutil.rmtree(directory)
+
+def install_transaction(stage, prefix=PREFIX):
+    validate_local(stage)
+    recover_transaction(prefix)
+    directory = prefix / '.simpleupdate-transaction'
+    directory.mkdir(mode=0o700)
+    incoming = directory / 'new'
+    shutil.copytree(stage, incoming, symlinks=True)
+    files = []
+    for file in incoming.rglob('*'):
+        relative = file.relative_to(incoming)
+        if any(tree in relative.parents for tree in SOURCE_TREES):
+            continue
+        if file.is_file() or file.is_symlink() or relative in SOURCE_TREES:
+            files.append(relative)
+    # Provenance changes last, so interrupted work is never described as installed.
+    files.sort(key=lambda x: (str(x).endswith('/install-manifest'), str(x)))
+    state = {'committed': False, 'files': []}
+    write_journal(directory, state)
+    try:
+        for relative in files:
+            check_parents(prefix, relative)
+            destination = prefix / relative
+            backup = directory / 'old' / relative
+            existed = destination.exists() or destination.is_symlink()
+            state['files'].append({'path': str(relative), 'existed': existed})
+            write_journal(directory, state)
+            if existed:
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                if destination.is_dir() and not destination.is_symlink():
+                    os.replace(destination, backup)
+                else:
+                    os.link(destination, backup, follow_symlinks=False)
+            os.replace(incoming / relative, destination)
+        state['committed'] = True
+        write_journal(directory, state)
+    except BaseException:
+        recover_transaction(prefix)
+        raise
+    shutil.rmtree(directory)
+
+def main():
+    global LOG_STREAM
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true', help='report available updates without installing')
+    parser.add_argument('--os-only', action='store_true', help='only Debian and Liquorix through APT')
+    parser.add_argument('--suite-only', action='store_true', help='only official SimpleSuite')
+    parser.add_argument('--wm-only', action='store_true', help='only SimpleWM')
+    parser.add_argument('--wm-local', type=Path, help='build/test an explicitly chosen local SimpleWM source folder')
+    parser.add_argument('--rebuild', action='store_true', help='retest/reinstall even when the revision is unchanged')
+    args = parser.parse_args()
+    if sum((args.os_only, args.suite_only, args.wm_only)) > 1:
+        parser.error('choose one update scope')
+    if args.wm_local and (args.os_only or args.suite_only):
+        parser.error('--wm-local requires a scope that includes SimpleWM')
+    if os.geteuid() != 0:
+        os.execvp('sudo', ['sudo', str(Path(__file__).resolve()), *sys.argv[1:]])
+    os.umask(0o022)
+    os.environ['PATH'] = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+    lock = open('/run/lock/simpleupdate.lock', 'w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit('simpleupdate is already running')
+    recover_transaction()
+    if not args.suite_only and not args.wm_only:
+        say('Refreshing Debian and Liquorix APT repositories')
+        run(['apt-get', 'update', '-o', 'APT::Update::Error-Mode=any'])
+        run(['apt-get', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold',
+             '-s' if args.check else '-y', 'full-upgrade'])
+    if args.os_only:
+        return
+    uid, gid = build_identity()
+    work = Path(tempfile.mkdtemp(prefix='simpleupdate-', dir='/var/tmp'))
+    os.chown(work, uid, gid)
+    home = work / 'home'
+    home.mkdir(); os.chown(home, uid, gid)
+    env = safe_environment(home)
+    demote = as_user(uid, gid)
+    logs = Path('/var/log/simpleupdate')
+    logs.mkdir(mode=0o755, exist_ok=True)
+    logfile = logs / (time.strftime('%Y-%m-%d_%H-%M-%S') + '.log')
+    try:
+        with logfile.open('w') as log:
+            LOG_STREAM = log
+            say(f'Update transcript: {logfile}')
+            if not args.wm_only:
+                say(f'Fetching only {OFFICIAL}')
+                source = work / 'source'
+                sha = fetch_source(source, env, demote)
+                installed = installed_revision()
+                if sha == installed and not args.rebuild:
+                    say(f'SimpleSuite {sha[:12]} is current; no build needed')
+                elif args.check:
+                    say(f'SimpleSuite {installed or "unrecorded"} -> {sha}; no installation')
+                else:
+                    run(['apt-get', '-y', '--no-install-recommends', 'install', *BUILD_PACKAGES])
+                    stage = work / 'stage'
+                    stage.mkdir(); os.chown(stage, uid, gid)
+                    log.write(f'Official source: {OFFICIAL}\nRevision: {sha}\n'); log.flush()
+                    local = build_and_test(source, stage, sha, env, demote)
+                    log.write('Suite build, release tests, Simpleterm tests, and staged library checks passed.\n'); log.flush()
+                    install_transaction(local)
+                    log.write('SimpleSuite installation committed.\n')
+                    say(f'SimpleSuite {sha[:12]} installed; existing applications can finish normally')
+            if not args.suite_only:
+                update_wm(args, work, env, demote, uid, gid, log)
+            LOG_STREAM = None
+    except BaseException as error:
+        LOG_STREAM = None
+        say(f'Update failed: {error}. A failing component keeps its working binaries; completed components remain updated.')
+        raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if Path('/run/reboot-required').exists():
+        say('A reboot is needed for the updated kernel or system libraries')
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+        sys.exit(f'simpleupdate: {error}')

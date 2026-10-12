@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+# ext-session-lock keeps the screen locked if the locker crashes.
+exec swaylock --daemonize --color 101313 --font 'Ubuntu Sans' --font-size 16 \
+    --indicator-radius 65 --indicator-thickness 3 --inside-color 101313 \
+    --ring-color 92a58e --key-hl-color d3a175 --text-color e6e7e1 \
+    --show-failed-attempts

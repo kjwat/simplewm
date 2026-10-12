@@ -1,0 +1,121 @@
+# SimpleWM — a quiet writing desk. Copy to ~/.config/simplewm/config.
+# Reload: Super+Shift+R. Validate: simplewm --check-config -c PATH.
+# Commands after exec are shell commands. Quotes work; # starts a comment.
+set $mod Super
+set $terminal simpleterm
+set $browser firefox-esr
+
+layout columns
+border 1
+gaps inner 8
+gaps outer 12
+smart_gaps yes
+focus_follows_mouse no
+master_ratio 0.55
+color background #101313
+color inactive #343d3b
+color focused #92a58e
+color urgent #d3a175
+background /usr/local/share/backgrounds/simpleos/simpleos-background.png fit
+font "Ubuntu Sans 11"
+monospace_font "Ubuntu Sans Mono 13"
+font_hinting slight
+font_rgba rgb
+gtk_theme Yaru-red-dark
+cursor_theme Yaru
+cursor_size 24
+keyboard_layout us
+keyboard_variant ""
+keyboard_options ""
+repeat_rate 33
+repeat_delay 500
+
+# Preserve Ubuntu's default libinput acceleration and neutral speed.
+# Match a device name with a quoted glob to override a particular device.
+input pointer accel_profile=default accel_speed=0 natural_scroll=no left_handed=no middle_emulation=no
+input touchpad accel_profile=default accel_speed=0 natural_scroll=yes tap=yes tap_drag=yes drag_lock=no disable_while_typing=yes left_handed=no middle_emulation=no scroll=two_finger click=default
+# Native resolution and scale by default. Example: output eDP-1 scale=1.5
+output * scale=1 position=auto mode=preferred transform=normal adaptive_sync=no enabled=yes
+
+bindsym $mod+Return exec $terminal
+bindsym $mod+space exec $browser
+bindsym $mod+z close
+bindsym Ctrl+Up maximize
+bindsym Ctrl+Down restore
+# Ubuntu aliases, too.
+bindsym $mod+Up maximize
+bindsym $mod+Down restore
+bindsym $mod+f fullscreen
+bindsym $mod+Shift+f floating
+bindsym Alt+Tab focus next
+bindsym Alt+Shift+Tab focus prev
+bindsym $mod+Tab focus next
+bindsym $mod+Shift+Tab focus prev
+bindsym $mod+Left focus left
+bindsym $mod+Right focus right
+bindsym $mod+Shift+Left swap left
+bindsym $mod+Shift+Right swap right
+bindsym $mod+Page_Down workspace next
+bindsym $mod+Page_Up workspace prev
+bindsym $mod+Escape workspace previous
+bindsym $mod+1 workspace 1
+bindsym $mod+2 workspace 2
+bindsym $mod+3 workspace 3
+bindsym $mod+4 workspace 4
+bindsym $mod+5 workspace 5
+bindsym $mod+6 workspace 6
+bindsym $mod+7 workspace 7
+bindsym $mod+8 workspace 8
+bindsym $mod+9 workspace 9
+bindsym $mod+Shift+1 send 1
+bindsym $mod+Shift+2 send 2
+bindsym $mod+Shift+3 send 3
+bindsym $mod+Shift+4 send 4
+bindsym $mod+Shift+5 send 5
+bindsym $mod+Shift+6 send 6
+bindsym $mod+Shift+7 send 7
+bindsym $mod+Shift+8 send 8
+bindsym $mod+Shift+9 send 9
+bindsym $mod+c layout columns
+bindsym $mod+s layout stack
+bindsym $mod+m layout paper
+bindsym $mod+Shift+space layout float
+bindsym $mod+minus ratio -0.05
+bindsym $mod+equal ratio +0.05
+bindsym $mod+comma monitor left
+bindsym $mod+period monitor right
+bindsym $mod+Shift+comma send_monitor left
+bindsym $mod+Shift+period send_monitor right
+bindsym $mod+d exec simplewm-launcher
+bindsym $mod+F1 exec simplewm-help
+bindsym $mod+Shift+r reload
+bindsym $mod+Shift+c exec simpleterm -e nano ~/.config/simplewm/config
+bindsym $mod+l exec simplewm-lock
+bindsym $mod+n exec simpleterm -e simplenet
+bindsym $mod+v exec simpleterm -e simplevol
+bindsym $mod+b exec simpleterm -e simpleblue
+bindsym $mod+e exec simpleterm -e simplefiles
+bindsym $mod+x exec simpleterm -e simplewords
+bindsym $mod+w exec simpleterm -e wallpaper-theme --wizard
+bindsym $mod+Shift+q exec simplewm-power
+bindsym Print exec simplewm-screenshot
+bindsym Shift+Print exec simplewm-screenshot region
+bindsym XF86AudioRaiseVolume exec wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+
+bindsym XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bindsym XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bindsym XF86AudioMicMute exec wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
+bindsym XF86MonBrightnessUp exec brightnessctl set +5%
+bindsym XF86MonBrightnessDown exec brightnessctl set 5%-
+bindsym XF86AudioPlay exec playerctl play-pause
+bindsym XF86AudioNext exec playerctl next
+bindsym XF86AudioPrev exec playerctl previous
+
+# Floating dialogs stay with their parent. Rules use glob matches.
+rule app_id=pavucontrol floating=yes
+rule app_id=org.gnome.Calculator floating=yes
+# rule app_id=firefox* workspace=2 floating=no
+# rule title="*Preferences*" floating=yes
+
+# Session services run once; reload never relaunches them.
+exec simplewm-services
+# include ~/.config/simplewm/local.conf

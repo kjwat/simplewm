@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export XDG_CURRENT_DESKTOP=SimpleWM XDG_SESSION_DESKTOP=simplewm DESKTOP_SESSION=simplewm
+export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1 QT_QPA_PLATFORM='wayland;xcb'
+export QT_QPA_PLATFORMTHEME=gtk3 _JAVA_AWT_WM_NONREPARENTING=1
+export BROWSER=firefox-esr TERMINAL=simpleterm
+export XCURSOR_PATH="${XCURSOR_PATH:-$HOME/.icons}:/usr/local/share/icons:/usr/share/icons:/usr/share/pixmaps"
+if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+config_root=${XDG_CONFIG_HOME:-$HOME/.config}
+mkdir -p "$config_root/simplewm"
+if [ ! -e "$config_root/simplewm/config" ]; then
+    cp /usr/local/share/simplewm/config "$config_root/simplewm/config"
+fi
+xdg-user-dirs-update 2>/dev/null || true
+if [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+elif [ "${1:-}" != --dbus-ready ]; then
+    exec dbus-run-session -- "$0" --dbus-ready "$@"
+fi
+[ "${1:-}" != --dbus-ready ] || shift
+# Each session has its own log; no desktop services run at the text login.
+state=${XDG_STATE_HOME:-$HOME/.local/state}/simplewm
+mkdir -p "$state"
+[ ! -f "$state/session.log" ] || mv -f "$state/session.log" "$state/session.previous.log"
+exec /usr/local/bin/simplewm "$@" >>"$state/session.log" 2>&1

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=SimpleWM
+Comment=A quiet Wayland writing desk
+Exec=/usr/local/bin/simplewm-session
+TryExec=/usr/local/bin/simplewm
+Type=Application
+DesktopNames=SimpleWM;

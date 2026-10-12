@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+font=$(printf '%s' "${SIMPLEWM_FONT:-Ubuntu Sans 11}" | sed -E 's/ ([0-9]+(\.[0-9]+)?)$/:size=\1/')
+choice=$(printf '%s\n' 'Lock' 'Sleep' 'Log out' 'Restart' 'Shut down' | \
+    fuzzel --dmenu --font "$font" --lines 5 --width 25 --prompt 'Session  ') || exit 0
+case $choice in
+    Lock) exec simplewm-lock ;;
+    Sleep) exec systemctl suspend ;;
+    'Log out') exec simplewmctl exit ;;
+    Restart) exec systemctl reboot ;;
+    'Shut down') exec systemctl poweroff ;;
+esac

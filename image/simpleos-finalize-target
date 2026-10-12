@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[ -x /usr/local/bin/simplewm ]
+[ -x /usr/local/bin/simplewm-session ]
+[ -x /usr/local/bin/simpleterm ]
+[ -x /usr/local/bin/simpleupdate ]
+[ -f /etc/apt/sources.list.d/liquorix.sources ]
+[ -n "$(find /boot -maxdepth 1 -name 'vmlinuz-*-liquorix-amd64' -type f -print -quit)" ]
+ssh-keygen -A
+[ ! -e /var/lib/tailscale/tailscaled.state ] || {
+    printf '%s\n' 'Refusing to install a cloned Tailscale identity.' >&2
+    exit 1
+}
+# XFCE stays on the live medium for Calamares. The installed writing desk
+# starts on first-console login, with no display manager in memory.
+systemctl disable lightdm.service 2>/dev/null || true
+systemctl set-default multi-user.target
+systemctl enable NetworkManager.service tailscaled.service simpleserved.service ssh.service
+systemctl enable avahi-daemon.service 2>/dev/null || true
+systemctl add-wants multi-user.target upower.service
+chmod 0755 /etc/grub.d/06_simpleos_theme
+update-grub
+plymouth-set-default-theme simpleos
+printf '%s\n' 'SimpleOS target finalized: Liquorix -> text login -> SimpleWM. Updates: simpleupdate.'
