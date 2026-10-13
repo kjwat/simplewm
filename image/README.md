@@ -40,6 +40,13 @@ published Git commit as `simplewm_source_sha` in
 use `source_digest` from `scripts/simpleupdate` instead. Generated build files and
 Git metadata do not belong in the source snapshot.
 
+The image builder generates all Bash application shortcuts from the staged
+Suite's `command-abbreviations`, plus `term`, `check`, and `trident`. It rejects
+missing executable targets instead of shipping incomplete aliases. Run
+`python3 tests/image-check.py`, `python3 tests/setup-check.py`, and
+`python3 tests/update-check.py` before repacking. The offline source bundle
+must include `main`; setup explicitly checks out that branch.
+
 Finally:
 
 ```sh

@@ -24,7 +24,11 @@ def setup():
         origin = 'https://github.com/kjwat/simplewm.git'
         with tempfile.TemporaryDirectory(dir=home, prefix='.simplewm-setup-') as tmp:
             staging = Path(tmp) / 'source'
-            git(home, 'clone', '--quiet', str(bundle) if bundle.exists() else origin, str(staging))
+            # A bundle has a main ref, but does not advertise a default HEAD.
+            # Select it explicitly so clone checks out files instead of leaving
+            # an unborn master branch followed by an untracked source snapshot.
+            branch = ['--branch', 'main'] if bundle.exists() else []
+            git(home, 'clone', '--quiet', *branch, str(bundle) if bundle.exists() else origin, str(staging))
             git(staging, 'remote', 'set-url', 'origin', origin)
             snapshot = data / 'source'
             if snapshot.is_dir():

@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 import io
 import argparse
+import contextlib
+import subprocess
 from unittest.mock import patch
 
 path = Path(__file__).resolve().parent.parent / 'scripts/simpleupdate'
@@ -114,3 +116,62 @@ for verify in (False, True):
         commands=[call.args[0] for call in runner.call_args_list]
         assert any('release-simplewords' in command for command in commands)==verify
 print('OK normal updates skip all developer tests; --verify explicitly enables them')
+
+# Exercise the real Git object check with a freshly initialized repository.
+# Replace only the network transport with an isolated local upstream fixture.
+with tempfile.TemporaryDirectory() as temp:
+    root = Path(temp); upstream = root / 'upstream'; home = root / 'home'; home.mkdir()
+    env = update.safe_environment(home)
+    def git(*args):
+        return subprocess.run(['git', *map(str, args)], env=env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git('init', '--quiet', '-b', 'main', upstream)
+    (upstream / 'config').write_text('published source\n')
+    git('-C', upstream, 'add', 'config')
+    git('-C', upstream, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+        'commit', '--quiet', '-m', 'published')
+    published = git('-C', upstream, 'rev-parse', 'HEAD')
+    runner = update.run
+    def local_transport(args, **kwargs):
+        args = list(args)
+        if 'fetch' in args and args[-2] == 'origin':
+            args = ['protocol.file.allow=always' if a == 'protocol.file.allow=never' else a for a in args]
+            args[-2] = str(upstream)
+        return runner(args, **kwargs)
+    for index, origin in enumerate((update.OFFICIAL, update.OFFICIAL_WM)):
+        source = root / f'source-{index}'
+        output = io.StringIO()
+        with patch.object(update, 'run', side_effect=local_transport), \
+             patch.object(update, 'LOG_STREAM', output), contextlib.redirect_stdout(output):
+            fetched = update.fetch_source(source, env, None, origin)
+        assert fetched == published
+        assert (source / 'config').read_text() == 'published source\n'
+        assert git('-C', source, 'rev-parse', 'HEAD') == published
+        assert not any(message in output.getvalue() for message in
+                       ('unborn', 'No default references', 'dangling commit'))
+    # An older published release is a successful no-update result, without a
+    # rebuild or downgrade. Keep real bundle fetching and ancestry checking.
+    (upstream / 'config').write_text('bundled source\n')
+    git('-C', upstream, 'add', 'config')
+    git('-C', upstream, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+        'commit', '--quiet', '-m', 'bundled')
+    installed = git('-C', upstream, 'rev-parse', 'HEAD')
+    prefix = root / 'local'; data = prefix / 'share/simplewm'; data.mkdir(parents=True)
+    git('-C', upstream, 'bundle', 'create', data / 'source.bundle', 'main')
+    git('-C', upstream, 'update-ref', 'refs/heads/main', published)
+    work = root / 'work'; work.mkdir()
+    output = io.StringIO()
+    with patch.object(update, 'run', side_effect=local_transport), \
+         patch.object(update, 'LOG_STREAM', output), contextlib.redirect_stdout(output), \
+         patch.object(update, 'PREFIX', prefix), \
+         patch.object(update, 'installed_revision', return_value=installed), \
+         patch.object(update, 'wm_repository_exists', return_value=True), \
+         patch.object(update, 'build_and_test_wm') as build, \
+         patch.object(update, 'install_transaction') as install:
+        update.update_wm(argparse.Namespace(wm_local=None, rebuild=False, check=False),
+                         work, env, None, 0, 0, output)
+    build.assert_not_called(); install.assert_not_called()
+    assert 'no newer published release; no update needed' in output.getvalue()
+    assert not any(message in output.getvalue() for message in
+                   ('unborn', 'No default references', 'dangling commit', 'Update failed'))
+print('OK real Git fetch/object verification is quiet; older upstream preserves the bundled release')

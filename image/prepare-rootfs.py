@@ -7,10 +7,46 @@ Latest SimpleSuite must already be built into payload/usr/local.
 import argparse
 import configparser
 from pathlib import Path
+import re
+import shlex
 import shutil
 
 RELEASE = '0.8'
 SOURCE = Path(__file__).resolve().parent.parent
+
+def prepare_shell_aliases(root):
+    """Generate the complete shell shortcuts from the staged Suite manifest."""
+    aliases = {}
+    manifest = root / 'usr/local/share/simplesuite/command-abbreviations'
+    for line in manifest.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        fields = line.split()
+        if (len(fields) != 2 or not re.fullmatch(r'[a-z][a-z0-9-]*', fields[0])
+                or not re.fullmatch(r'simple[a-z0-9-]+', fields[1])):
+            raise RuntimeError(f'invalid command abbreviation: {line}')
+        short, full = fields
+        if short in aliases and aliases[short] != full:
+            raise RuntimeError(f'conflicting command abbreviation: {short}')
+        aliases[short] = full
+    aliases.update(term='simpleterm', check='simplecheck', trident='simpletrident')
+    for short, full in aliases.items():
+        target = root / 'usr/local/bin' / full
+        if not target.is_file() or not target.stat().st_mode & 0o111:
+            raise RuntimeError(f'command abbreviation {short} has no executable: {target}')
+    begin, end = '# BEGIN SimpleOS application aliases', '# END SimpleOS application aliases'
+    block = begin + '\n' + ''.join(f'alias {short}={shlex.quote("/usr/local/bin/" + full)}\n'
+                                  for short, full in sorted(aliases.items())) + end + '\n'
+    bashrc = root / 'etc/skel/.bashrc'
+    content = bashrc.read_text()
+    pattern = re.compile(r'^' + re.escape(begin) + r'\n.*?^' + re.escape(end) + r'\n?', re.M | re.S)
+    if begin in content or end in content:
+        if len(pattern.findall(content)) != 1:
+            raise RuntimeError('expected one complete SimpleOS application alias block')
+        content = pattern.sub(lambda match: block, content)
+    else:
+        content = content.rstrip('\n') + '\n\n' + block
+    bashrc.write_text(content)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -155,11 +191,7 @@ Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted with
     cfg['Text']['custom-font'] = 'false'
     with term.open('w') as out:
         cfg.write(out)
-    bashrc = root / 'etc/skel/.bashrc'
-    with bashrc.open('a') as out:
-        for short, command in (('note', 'simplenote'), ('term', 'simpleterm'), ('save', 'simplesave')):
-            if f'alias {short}=' not in bashrc.read_text():
-                out.write(f"\nalias {short}='/usr/local/bin/{command}'\n")
+    prepare_shell_aliases(root)
     live_setup = root / 'usr/local/bin/simpleos-live-session-setup'
     live_setup.write_text(live_setup.read_text().replace('installed dwm system', 'installed SimpleWM system')
                           .replace('-s SimpleOS', '-s Yaru-red-dark').replace('Ubuntu Sans Mono 12', 'Ubuntu Sans Mono 13'))

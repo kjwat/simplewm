@@ -105,7 +105,9 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
               capture_output=True, text=True, **opts).stdout.strip()
     if not re.fullmatch(r'[0-9a-f]{40,64}', sha):
         raise RuntimeError('Git returned an invalid revision')
-    run(git + ['-C', str(source), 'fsck', '--strict', '--no-reflogs'], **opts)
+    # FETCH_HEAD is not a default fsck root. Check the fetched commit explicitly
+    # before checkout, without diagnosing the temporary repository's empty HEAD.
+    run(git + ['-C', str(source), 'fsck', '--strict', '--no-reflogs', sha], **opts)
     run(git + ['-C', str(source), 'checkout', '--quiet', '--detach', sha], **opts)
     return sha
 
@@ -244,7 +246,7 @@ def update_wm(args, work, env, demote, uid, gid, log):
         older = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', sha, current],
                                env=env, preexec_fn=demote).returncode == 0
         if older and sha != current:
-            say('Installed SimpleWM is newer than the published branch; keeping the installed release')
+            say(f'SimpleWM {current[:12]}: no newer published release; no update needed')
             return
     if current == sha and not args.rebuild:
         say(f'SimpleWM {sha[:18]} is current; no build needed')
