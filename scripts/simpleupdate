@@ -25,6 +25,13 @@ MANIFEST = PREFIX / 'share/simplesuite/install-manifest'
 WM_MANIFEST = PREFIX / 'share/simplewm/install-manifest'
 WM_SOURCE = PREFIX / 'share/simplewm/source'
 SOURCE_TREES = (Path('share/simplesuite/source'), Path('share/simplewm/source'))
+# The 0.8 image shipped an unpublished Suite commit with preference reloads.
+# Its exact source snapshot is preserved by the published b1b1d74 release.
+LEGACY_SUITE_RELEASES = {
+    '07942663f959637275b891461f2e7eed38b65b90': (
+        'local-141bf55d98eac6e060a9c9b5fdb5fa39a77d4bf7a0b4108d5c792d434a791091',
+        'b1b1d74d3fecd364b5597983e8761e08a044701d'),
+}
 BUILD_PACKAGES = [
     'build-essential', 'pkg-config', 'git', 'ca-certificates', 'libncurses-dev',
     'libcurl4-openssl-dev', 'libssl-dev', 'libavahi-client-dev', 'libnm-dev',
@@ -130,6 +137,9 @@ def published_update_allowed(component, source, sha, current, env, demote):
     if present.returncode == 1:
         if bundle.exists():
             raise RuntimeError(f'{component} installed history does not match its manifest')
+        if component == 'SimpleSuite' and legacy_suite_update_allowed(source, sha, current, env, demote):
+            say('SimpleSuite: verified the original 0.8 source snapshot; upgrading to its published successor')
+            return True
         # Older images have a source snapshot but no Suite Git bundle. Missing
         # history cannot establish that a different published commit is newer.
         say(f'{component}: published history does not include the installed release; keeping it')
@@ -205,6 +215,25 @@ def source_digest(source):
         if path.is_file():
             digest.update(str(relative).encode() + b'\0' + path.read_bytes() + b'\0')
     return 'local-' + digest.hexdigest()
+
+def legacy_suite_update_allowed(source, sha, current, env, demote):
+    known = LEGACY_SUITE_RELEASES.get(current)
+    snapshot = PREFIX / 'share/simplesuite/source'
+    if not known or not snapshot.is_dir() or snapshot.is_symlink():
+        return False
+    expected, base = known
+    if source_digest(snapshot) != expected:
+        return False
+    present = subprocess.run(['git', '-C', str(source), 'rev-parse', '--verify', '--quiet', base + '^{commit}'],
+                             capture_output=True, text=True, env=env, preexec_fn=demote)
+    if present.returncode == 1:
+        return False
+    present.check_returncode()
+    result = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', base, sha],
+                            capture_output=True, text=True, env=env, preexec_fn=demote)
+    if result.returncode not in (0, 1):
+        result.check_returncode()
+    return result.returncode == 0
 
 def wm_repository_exists():
     # Only a confirmed 404 means "not yet published"; TLS/network/rate-limit

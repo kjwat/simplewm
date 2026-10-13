@@ -157,6 +157,29 @@ with tempfile.TemporaryDirectory() as temp:
             assert not build_calls
             assert (prefix / 'bin/program').read_text() == 'working installed release'
             count += 1
+    # The known 0.8 snapshot can receive the published successor without
+    # treating unknown or edited local releases as automatically older.
+    legacy = '07942663f959637275b891461f2e7eed38b65b90'
+    for case, published, modified, changed in (
+            ('matching', newer, False, True),
+            ('modified', newer, True, False),
+            ('divergent', divergent, False, False)):
+        prefix, work = prepare('legacy-suite-' + case, legacy, bundle=False)
+        snapshot = prefix / 'share/simplesuite/source'; snapshot.mkdir()
+        (snapshot / 'config').write_text('original 0.8 terminal fixes')
+        expected = update.source_digest(snapshot)
+        if modified:
+            (snapshot / 'config').write_text('personal local terminal changes')
+        git('-C', upstream, 'update-ref', 'refs/heads/main', published)
+        build_calls.clear()
+        with patch.object(update, 'LEGACY_SUITE_RELEASES', {legacy: (expected, installed)}):
+            output = invoke('simplesuite', prefix, work)
+        assert len(build_calls) == int(changed), (case, output)
+        assert update.installed_revision(prefix / 'share/simplesuite/install-manifest') == (
+            newer if changed else legacy)
+        if changed:
+            assert 'verified the original 0.8 source snapshot' in output
+        count += 1
     # A corrupted fetched commit must fail the actual fsck before checkout.
     source = root / 'damaged-fetch'
     def damage_after_fetch(args, **kwargs):

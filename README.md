@@ -85,6 +85,14 @@ component has a recoverable transaction; a failed build never reaches the
 installation, and partial installation restores that component's old files.
 Successful earlier components remain updated if a later component fails.
 
+The original 0.8 image recorded an unpublished Suite revision. Its exact bundled
+source snapshot can migrate to the published successor, which retains those
+terminal preference reloads and adds the handle-color picker. Modified or unknown
+snapshots remain protected. On those fresh 0.8 installs, first run
+`simpleupdate --wm-only` to obtain the updated updater, then
+`simpleupdate --suite-only` to install the new Simpleterm. Later updates use
+`simpleupdate` normally.
+
 Personal configurations, documents, dotfiles, browser profiles, and suite data
 are preserved. APT keeps modified conffiles. Build dependencies come from APT
 only when a build is needed. Source snapshots and revision manifests live in
