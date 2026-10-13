@@ -115,7 +115,14 @@ for verify in (False, True):
             update.build_and_test(source, stage, '0'*40, {}, None, verify=verify)
         commands=[call.args[0] for call in runner.call_args_list]
         assert any('release-simplewords' in command for command in commands)==verify
-print('OK normal updates skip all developer tests; --verify explicitly enables them')
+        assert any(command[0] == 'make' and 'all' in command and 'simpleterm' in command
+                   for command in commands), 'Simpleterm must build with every changed Suite release'
+        terminal_install = next(call for call in runner.call_args_list
+                                if str(source / 'install-simpleterm.sh') in call.args[0])
+        assert terminal_install.args[0] == ['sh', str(source / 'install-simpleterm.sh'), '--no-deps']
+        assert terminal_install.kwargs['env']['DESTDIR'] == str(stage)
+        assert terminal_install.kwargs['env']['SIMPLETERM_NONINTERACTIVE'] == '1'
+print('OK normal updates stage Simpleterm and its Bash asset; --verify explicitly enables developer tests')
 
 # Exercise the real Git object check with a freshly initialized repository.
 # Replace only the network transport with an isolated local upstream fixture.

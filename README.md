@@ -93,6 +93,13 @@ snapshots remain protected. On those fresh 0.8 installs, first run
 `simpleupdate --suite-only` to install the new Simpleterm. Later updates use
 `simpleupdate` normally.
 
+Simpleterm is built and installed with every changed SimpleSuite release,
+including its Bash prompt asset. Published terminal fixes arrive through the
+same updater on fresh installs. Simpleterm 0.2.7 restores the wallpaper palette
+with **Use colors from system theme** and saves the working **Simpleterm**
+preset. Open terminals can finish normally; close and reopen Simpleterm to use
+the updated preferences code.
+
 Personal configurations, documents, dotfiles, browser profiles, and suite data
 are preserved. APT keeps modified conffiles. Build dependencies come from APT
 only when a build is needed. Source snapshots and revision manifests live in
