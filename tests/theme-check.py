@@ -34,7 +34,11 @@ with tempfile.TemporaryDirectory(prefix='simplewm-theme-') as temp:
                XDG_STATE_HOME=str(home / '.local/state'))
     image=home / 'wallpaper with spaces.png'
     Image.new('RGB',(128,128),(23,80,54)).save(image)
-    subprocess.run(['python3',str(tool),str(image)],env=env,check=True)
+    # With no image argument the original terminal wizard must be used.
+    wizard = subprocess.run(['python3',str(tool)], input=str(image) + '\n\n',
+                            env=env, check=True, text=True, capture_output=True)
+    assert 'Wallpaper image (path):' in wizard.stdout
+    assert 'Mode: fit / fill / center / stretch / tile [fill]:' in wizard.stdout
     term=configparser.ConfigParser()
     term.read(terminal)
     assert dict(term['Text'])=={'font':'My beloved font 17','custom-font':'true','cell-height':'1.2'}

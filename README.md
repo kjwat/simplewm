@@ -110,16 +110,17 @@ unless you arrange your own signing.
 
 ## Wallpaper and palette
 
-Super+W opens the graphical wallpaper chooser, with preview, Fill/Fit controls,
-a zoom slider, and a checkbox for matching application colors. Clean installs use Fill. You can also run
+Super+W opens the wallpaper wizard in Simpleterm. Clean installs use Fill.
+You can also run
 `wallpaper-theme /path/to/picture` or `wallpaper-theme --mode fill --zoom 1.5 /path/to/picture`.
-`--wizard` remains available for terminal prompts.
+Running `wallpaper-theme` without an image also opens the terminal prompts.
 The tool retains the palette extraction and contrast rules from your original
 `wallpaper-theme-dwm.sh`, applying the result to SimpleWM borders/background,
 GTK, Fuzzel, Simpleterm's ANSI colors, Xresources, and existing Firefox profiles.
 It adds a small `palette.conf` include instead of replacing your WM config.
 Font settings remain separate. Existing GTK CSS, Firefox preferences and chrome
-styles are preserved. Reopen Simpleterm/Firefox after their first palette change.
+styles are preserved. Open Simpleterm windows reload their colors automatically.
+Restart Firefox after its first palette change.
 `wallpaper-theme --wallpaper-only PATH` changes only the image;
 `wallpaper-theme --rollback` restores the previous files.
 

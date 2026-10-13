@@ -50,6 +50,7 @@ def main():
         'usr/local/bin/dwm', 'usr/local/src/dwm-simpleos', 'usr/share/xsessions/dwm.desktop',
         'usr/local/bin/simpleos-status', 'usr/local/bin/simpleos-trident-first-run',
         'usr/local/bin/wallpaper-theme-dwm.sh', 'usr/share/applications/simpleos-wallpaper.desktop',
+        'usr/local/bin/simplewm-appearance',
         'etc/skel/.local/share/simplesuite', 'etc/skel/.xinitrc',
         'usr/local/share/simplesuite/source', 'usr/local/share/scriptorium/source',
         'usr/local/share/simpleos/CHANGES.csv', 'usr/local/share/simpleos/CHANGES.md',
@@ -88,7 +89,7 @@ export SIMPLEOS_BUNDLED_SIMPLESUITE_SOURCE=/usr/local/share/simplesuite/source
     write('usr/local/share/applications/simplewm-wallpaper.desktop', '''[Desktop Entry]
 Name=Wallpaper and colors
 Comment=Choose a wallpaper and a legible palette
-Exec=wallpaper-theme --gui
+Exec=simpleterm -e wallpaper-theme --wizard
 Icon=preferences-desktop-wallpaper
 Type=Application
 Terminal=false

@@ -561,7 +561,9 @@ def apply_image(source, mode, wallpaper_only=False, zoom=1.0):
     print(f'Wallpaper: {source}\nMode: {mode}\nAccent: {hexcolor(theme["accent"])}')
     if not wallpaper_only:
         print('SimpleWM, GTK, launcher, Simpleterm, Xwayland, and existing Firefox profiles use the palette.')
-    print('Reopen Simpleterm and Firefox for their first palette change. Fonts are preserved. Undo: wallpaper-theme --rollback')
+    print('Fonts are preserved. Undo: wallpaper-theme --rollback')
+    if not wallpaper_only:
+        print('Open Simpleterm windows update automatically. Restart Firefox for its first palette change.')
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -569,17 +571,12 @@ def main():
     parser.add_argument('--mode',choices=['fit','fill','center','stretch','tile'],default='fill')
     parser.add_argument('--wallpaper-only',action='store_true')
     parser.add_argument('--wizard',action='store_true',help='interactive terminal prompts')
-    parser.add_argument('--gui',action='store_true',help='graphical wallpaper and color settings')
     parser.add_argument('--zoom',type=float,default=1.0,help='center zoom from 1 to 5')
     parser.add_argument('--rollback',action='store_true')
     parser.add_argument('--startup',action='store_true')
     parser.add_argument('--doctor',action='store_true')
     parser.add_argument('--version',action='version',version='wallpaper-theme SimpleWM 1.0 (palette engine 3.8)')
     args=parser.parse_args()
-    if args.gui or (not args.image and not any((args.wizard,args.rollback,args.startup,args.doctor))):
-        import runpy
-        ui=Path(__file__).resolve().with_name('simplewm-appearance')
-        runpy.run_path(str(ui),run_name='__main__'); return
     if args.rollback:
         rollback(); return
     if args.startup:

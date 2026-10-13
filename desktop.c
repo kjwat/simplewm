@@ -264,11 +264,6 @@ static int dispatch(const Binding *b)
    arg.ui=1u<<current;
   } else arg.ui=1u<<(atoi(b->arg)-1);
   view(&arg);
-  if (!getenv("SIMPLEWM_NO_NOTIFICATIONS")) {
-   char message[256];
-   snprintf(message,sizeof(message),"notify-send -a SimpleWM -t 1000 -h string:x-canonical-private-synchronous:workspace 'Workspace %d of %d'",__builtin_ctz(selmon->tagset[selmon->seltags])+1,TAGCOUNT);
-   run_shell(message);
-  }
   break;
  case A_SEND: tag(&(Arg){.ui=1u<<(atoi(b->arg)-1)}); break;
  case A_LAYOUT: setlayout(&(Arg){.v=&layouts[cfg_layout(b->arg)]}); break;

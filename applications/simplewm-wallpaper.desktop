@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Wallpaper and Colors
-Exec=wallpaper-theme --gui
+Exec=simpleterm -e wallpaper-theme --wizard
 TryExec=wallpaper-theme
 Icon=preferences-desktop-wallpaper
 Terminal=false
 Categories=Utility;
-Keywords=wallpaper;theme;zoom;appearance;
+Keywords=wallpaper;theme;appearance;

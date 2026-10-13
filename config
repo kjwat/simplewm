@@ -98,7 +98,7 @@ bindsym $mod+v exec simpleterm -e simplevol
 bindsym $mod+b exec simpleterm -e simpleblue
 bindsym $mod+e exec simpleterm -e simplefiles
 bindsym $mod+x exec simpleterm -e simplewords
-bindsym $mod+w exec wallpaper-theme --gui
+bindsym $mod+w exec simpleterm -e wallpaper-theme --wizard
 bindsym $mod+Shift+q exec simplewm-power
 bindsym Print exec simplewm-screenshot region
 bindsym Shift+Print exec simplewm-screenshot full

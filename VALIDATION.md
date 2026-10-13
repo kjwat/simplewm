@@ -7,8 +7,17 @@ Source verification on 2026-10-12:
   source/config paths share the same files and repeat setup is idempotent.
 - Real headless Wayland/Xwayland desktop checks, including bounded workspaces
   and GTK xdg-foreign dialogs in separate processes.
-- Graphical wallpaper preview and Apply, Fill default and application colors.
+- Terminal wallpaper wizard, Fill default, palette generation and rollback.
 - Ordinary updates skip developer tests; --verify opts into them.
+
+The corrected 0.8 removes workspace notifications and the GTK wallpaper chooser.
+Configuration, theme, offline setup and updater checks were rerun successfully.
+The session regression now intercepts notify-send and checks workspace shortcuts
+without suppressing notifications. Its rerun could not start a compositor:
+the current sandbox prohibits creating local sockets. Simpleterm's real file
+monitor passed repeated red/blue palette replacements, font preservation,
+invalid-file handling and restoration without a display. GUI session reruns
+are subject to that same socket restriction.
 
 The 0.8 VM boot/installation walkthrough was waived by the user to conserve
 compute. Image structure and checksums are checked; release results are recorded

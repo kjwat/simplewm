@@ -26,7 +26,7 @@ Super+, / .         Previous / next monitor (Shift moves the window)
 
 Super+S             Application launcher
 Super+E / X         SimpleFiles / SimpleWords
-Super+W             Wallpaper and matching palette (preserves fonts)
+Super+W             Terminal wallpaper wizard (preserves fonts)
 Super+N / V / B     Network / sound / Bluetooth
 Super+L             Lock screen
 Super+Shift+Q       Lock, sleep, logout, restart, or shutdown menu

@@ -31,10 +31,19 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
     base = (source / 'config').read_text().replace('exec simplewm-services', '# services disabled in isolated tests')
     base = base.replace('background /usr/local/share/backgrounds/simpleos/simpleos-background.png fill', 'background none')
     config.write_text(base)
+    helpers = root / 'bin'
+    helpers.mkdir()
+    notifications = root / 'notifications.log'
+    notify = helpers / 'notify-send'
+    notify.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SIMPLEWM_TEST_NOTIFICATION_LOG"\n')
+    notify.chmod(0o755)
     env = os.environ.copy()
-    env.update(SIMPLEWM_NO_NOTIFICATIONS='1', HOME=str(home), XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless',
+    env.update(HOME=str(home), XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless',
                WLR_HEADLESS_OUTPUTS='2', WLR_RENDERER='pixman', GDK_BACKEND='wayland',
-               GSETTINGS_BACKEND='memory', NO_AT_BRIDGE='1', XDG_CONFIG_HOME=str(home / '.config'))
+               GSETTINGS_BACKEND='memory', NO_AT_BRIDGE='1', XDG_CONFIG_HOME=str(home / '.config'),
+               PATH=str(helpers) + os.pathsep + env['PATH'],
+               SIMPLEWM_TEST_NOTIFICATION_LOG=str(notifications))
+    env.pop('SIMPLEWM_NO_NOTIFICATIONS', None)
     env.pop('DISPLAY', None)
     env.pop('WAYLAND_DISPLAY', None)
     log = (root / 'session.log').open('w')
@@ -77,6 +86,15 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         request('workspace 9'); request('workspace next')
         assert sorted(o['workspace'] for o in status()['outputs']) == [1, 9]
         request('workspace 1')
+        for command, expected in (('workspace 2', 2), ('workspace next', 3),
+                                  ('workspace prev', 2), ('workspace previous', 3),
+                                  ('workspace 3', 3), ('workspace 1', 1)):
+            assert request(command)['ok']
+            assert next(o['workspace'] for o in status()['outputs'] if o['active']) == expected
+        for shortcut, expected in (('Page_Down', 2), ('Page_Up', 1), ('2', 2), ('Escape', 1)):
+            key('-M', 'logo', '-k', shortcut, '-m', 'logo')
+            assert next(o['workspace'] for o in status()['outputs'] if o['active']) == expected
+        assert not notifications.exists(), 'Workspace switches must not send notifications'
 
         # GTK portal dialogs export a parent across process boundaries.
         probe = root / 'foreign-dialog'
@@ -159,7 +177,8 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         assert not request('exec touch /tmp/simplewm-lock-bypass')['ok']
         lock.kill(); lock.wait()
         assert status()['locked'], 'locker crash must remain locked'
-        print('OK native/Xwayland windows, real shortcuts, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
+        assert not notifications.exists(), 'Workspace shortcuts must not send notifications'
+        print('OK native/Xwayland windows, real shortcuts, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
     except BaseException:
         log.flush()
         print((root / 'session.log').read_text(errors='replace'), file=sys.stderr)
