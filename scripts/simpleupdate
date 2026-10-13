@@ -262,7 +262,7 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     run(common + ['CFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter'], **opts)
     run([str(source / 'build/simplewm'), '--check-config', '-c', str(source / 'config')], **opts)
     if verify:
-        for check in ('config-check.py', 'update-check.py', 'update-logic-check.py',
+        for check in ('config-check.py', 'update-check.py', 'update-logic-check.py', 'update-plain-check.py',
                       'theme-check.py', 'setup-check.py', 'image-check.py'):
             run(['python3', str(source / 'tests' / check)], **opts)
         run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)

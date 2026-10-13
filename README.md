@@ -67,7 +67,7 @@ locked. It performs no polling. See HELP.txt for the default shortcuts.
 
 ## Updates
 
-`simpleupdate` updates Debian and Liquorix using normal signed APT repositories,
+Run **`simpleupdate`** once to bring the system up to date. It updates Debian and Liquorix using normal signed APT repositories,
 then updates SimpleSuite from `https://github.com/kjwat/simplesuite.git` and
 SimpleWM from `https://github.com/kjwat/simplewm.git`. No new package manager or
 automatic background updater is involved. Ordinary `apt update` and
@@ -85,13 +85,13 @@ component has a recoverable transaction; a failed build never reaches the
 installation, and partial installation restores that component's old files.
 Successful earlier components remain updated if a later component fails.
 
-The original 0.8 image recorded an unpublished Suite revision. Its exact bundled
-source snapshot can migrate to the published successor, which retains those
-terminal preference reloads and adds the handle-color picker. Modified or unknown
-snapshots remain protected. On those fresh 0.8 installs, first run
-`simpleupdate --wm-only` to obtain the updated updater, then
-`simpleupdate --suite-only` to install the new Simpleterm. Later updates use
-`simpleupdate` normally.
+The 0.8-r2 ISO ships published Suite and WM revisions and their Git history.
+Its original updater already fetches the latest official releases and installs
+changed components, including Simpleterm and the updater itself, in one run of
+`simpleupdate`. Reinstalling that ISO follows the same path; no component flags
+or preliminary updater command are needed. A regression test runs the unmodified
+updater shipped in that ISO with no arguments, fresh-install manifests, real Git
+ancestry and installation transactions.
 
 Simpleterm is built and installed with every changed SimpleSuite release,
 including its Bash prompt asset. Published terminal fixes arrive through the
@@ -107,13 +107,7 @@ only when a build is needed. Source snapshots and revision manifests live in
 `/var/log/simpleupdate`; APT also keeps its normal system logs.
 
 ```sh
-simpleupdate --check                 # refresh/check, without installing
-simpleupdate --verify                # update with full developer tests (slow)
-simpleupdate --os-only               # Debian and Liquorix
-simpleupdate --suite-only            # SimpleSuite
-simpleupdate --wm-only               # SimpleWM
-simpleupdate --wm-only --rebuild     # force a clean WM rebuild
-simpleupdate --wm-only --wm-local ~/simplewm  # test/install your local changes
+simpleupdate
 ```
 
 Restart SimpleWM by logging out and in after a compositor update. Existing
