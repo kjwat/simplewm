@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Update Debian, SimpleSuite, and SimpleWM; --verify adds developer tests."""
+"""Update Debian, SimpleSuite, and SimpleWM; offer approved Debian release upgrades."""
 import argparse
 import fcntl
 import hashlib
@@ -8,14 +8,17 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 
 OFFICIAL = 'https://github.com/kjwat/simplesuite.git'
 OFFICIAL_WM = 'https://github.com/kjwat/simplewm.git'
@@ -25,6 +28,17 @@ MANIFEST = PREFIX / 'share/simplesuite/install-manifest'
 WM_MANIFEST = PREFIX / 'share/simplewm/install-manifest'
 WM_SOURCE = PREFIX / 'share/simplewm/source'
 SOURCE_TREES = (Path('share/simplesuite/source'), Path('share/simplewm/source'))
+APT_ROOT = Path('/etc/apt')
+SYSTEM_CONFIG = Path('/etc')
+OS_RELEASE = Path('/etc/os-release')
+DEBIAN_OS_RELEASE = Path('/usr/lib/os-release.debian')
+BACKUPS = Path('/var/backups/simpleupdate')
+PENDING_RELEASE = Path('/var/lib/simpleupdate/release-upgrade.json')
+PACKAGE_STATE = (Path('/var/lib/dpkg/status'), Path('/var/lib/apt/extended_states'))
+TARGET_HELPER = Path(__file__).resolve().with_name('simpleupdate-target')
+if not TARGET_HELPER.exists():
+    TARGET_HELPER = PREFIX / 'libexec/simpleupdate-target'
+STABLE_RELEASE = 'https://deb.debian.org/debian/dists/stable/Release'
 # The 0.8 image shipped an unpublished Suite commit with preference reloads.
 # Its exact source snapshot is preserved by the published b1b1d74 release.
 LEGACY_SUITE_RELEASES = {
@@ -49,12 +63,18 @@ WM_BUILD_PACKAGES = [
 
 def say(message):
     print(f'simpleupdate: {message}', flush=True)
-    if LOG_STREAM is not None:
+    if LOG_STREAM is not None and not LOG_STREAM.closed:
         LOG_STREAM.write(f'simpleupdate: {message}\n')
         LOG_STREAM.flush()
 
 def run(args, **kwargs):
-    if LOG_STREAM is not None and not kwargs.get('capture_output'):
+    interactive = kwargs.pop('interactive', False)
+    if interactive and LOG_STREAM is not None:
+        # APT/dpkg prompts need the real terminal: line-buffering a pipe can
+        # hide prompts that have no newline. APT records these in term.log.
+        LOG_STREAM.write('$ ' + shlex.join(map(str, args)) + ' (terminal output in /var/log/apt/term.log)\n')
+        LOG_STREAM.flush()
+    if LOG_STREAM is not None and not kwargs.get('capture_output') and not interactive:
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, errors='replace', **kwargs)
         for line in process.stdout:
@@ -66,6 +86,383 @@ def run(args, **kwargs):
             raise subprocess.CalledProcessError(code, args)
         return subprocess.CompletedProcess(args, code)
     return subprocess.run(args, check=True, **kwargs)
+
+def release_fields(text):
+    return dict(re.findall(r'^([A-Za-z][A-Za-z0-9-]*):[ \t]*(.*)$', text, re.MULTILINE))
+
+def os_release_fields(path):
+    # Parse data, never source an os-release file as shell code.
+    fields = {}
+    for line in path.read_text().splitlines():
+        if re.match(r'^[A-Z_]+=', line):
+            key, value = line.split('=', 1)
+            words = shlex.split(value)
+            fields[key] = words[0] if len(words) == 1 else ''
+    return fields
+
+def debian_release():
+    # SimpleOS diverts base-files' identity here. Its own VERSION_ID is 0.8,
+    # not the underlying Debian version, and survives Debian upgrades.
+    info = os_release_fields(DEBIAN_OS_RELEASE if DEBIAN_OS_RELEASE.exists() else OS_RELEASE)
+    major = info.get('VERSION_ID', '').split('.', 1)[0]
+    codename = info.get('VERSION_CODENAME', '')
+    if info.get('ID') != 'debian' or not major.isdigit() or not re.fullmatch(r'[a-z]+', codename):
+        raise RuntimeError('cannot identify the installed Debian release from base-files')
+    return int(major), codename
+
+def stable_release():
+    request = urllib.request.Request(STABLE_RELEASE, headers={'User-Agent': 'SimpleOS-simpleupdate'})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        if urllib.parse.urlsplit(response.geturl()).scheme != 'https':
+            raise RuntimeError('Debian release metadata redirected away from HTTPS')
+        data = response.read(2 * 1024 * 1024 + 1)
+    if len(data) > 2 * 1024 * 1024:
+        raise RuntimeError('Debian release metadata is too large')
+    info = release_fields(data.decode('utf-8'))
+    version = info.get('Version', '').split('.', 1)[0]
+    codename = info.get('Codename', '')
+    if (info.get('Origin') != 'Debian' or info.get('Suite') != 'stable'
+            or not version.isdigit() or not re.fullmatch(r'[a-z]+', codename)):
+        raise RuntimeError('unexpected Debian stable release metadata')
+    # This HTTPS metadata is for detection only. Signed APT metadata authorizes
+    # package installation, using the existing Debian archive keyring.
+    return int(version), codename
+
+def check_stable(required=False):
+    try:
+        return stable_release()
+    except (OSError, RuntimeError, ValueError) as error:
+        if required:
+            raise RuntimeError(f'cannot check Debian stable: {error}') from error
+        say(f'Cannot check for a new Debian release: {error}; continuing current-release updates')
+        return None
+
+def debian_uri(uri, options=''):
+    host = urllib.parse.urlsplit(uri).hostname or ''
+    return (host == 'debian.org' or host.endswith('.debian.org')
+            or 'debian-archive-keyring.' in options)
+
+def liquorix_uri(uri):
+    return urllib.parse.urlsplit(uri).hostname == 'liquorix.net'
+
+def pinned_suite(suite, codename):
+    for name in (codename, 'stable', 'oldstable', 'oldoldstable'):
+        for suffix in ('', '-updates', '-security', '-backports', '-backports-sloppy',
+                       '-proposed-updates', '/updates'):
+            if suite == name + suffix:
+                return codename + suffix
+    raise RuntimeError(f'APT suite {suite!r} does not match installed Debian {codename}; fix sources first')
+
+def deb822_field(block, name):
+    return re.search(r'^' + re.escape(name) + r':[^\n]*(?:\n[ \t]+[^\n]*)*',
+                     block, re.MULTILINE | re.IGNORECASE)
+
+def field_value(block, name):
+    match = deb822_field(block, name)
+    return match.group().split(':', 1)[1].split() if match else []
+
+def replace_field(block, name, value):
+    match = deb822_field(block, name)
+    if match:
+        return block[:match.start()] + f'{name}: {value}' + block[match.end():]
+    return block.rstrip('\n') + f'\n{name}: {value}\n'
+
+def apt_source_changes(codename, target=None):
+    """Plan edits to active .list/.sources entries; validate all before writing."""
+    paths = [APT_ROOT / 'sources.list']
+    paths += sorted((APT_ROOT / 'sources.list.d').glob('*.list'))
+    paths += sorted((APT_ROOT / 'sources.list.d').glob('*.sources'))
+    changes, found = {}, False
+    for path in paths:
+        if not path.exists():
+            continue
+        text = path.read_text()
+        parts = re.split(r'(\n[ \t]*\n)', text) if path.suffix == '.sources' else text.splitlines(keepends=True)
+        for index, part in enumerate(parts):
+            if path.suffix == '.sources':
+                types = field_value(part, 'Types')
+                if not {'deb', 'deb-src'}.intersection(types):
+                    continue
+                if [word.lower() for word in field_value(part, 'Enabled')] == ['no']:
+                    continue
+                uris, suites = field_value(part, 'URIs'), field_value(part, 'Suites')
+                components = field_value(part, 'Components')
+                options = ' '.join(field_value(part, 'Signed-By'))
+            else:
+                match = re.match(r'^(\s*deb(?:-src)?\s+(?:\[[^]]*\]\s+)?)(\S+)(\s+)(\S+)', part)
+                if not match:
+                    continue
+                types = [match[1].split()[0]]
+                uris, suites, options = [match[2]], [match[4]], match[1]
+                components = part[match.end(4):].split('#', 1)[0].split()
+            if not uris or not suites:
+                raise RuntimeError(f'incomplete APT source: {path}')
+            official = [debian_uri(uri, options) for uri in uris]
+            if any(official) and not all(official):
+                raise RuntimeError(f'split mixed Debian and third-party URIs in {path} before updating')
+            is_debian = all(official)
+            is_liquorix = all(liquorix_uri(uri) for uri in uris)
+            if is_debian or is_liquorix:
+                pinned = [pinned_suite(suite, codename) for suite in suites]
+            else:
+                pinned = suites
+                # Custom Debian mirrors must identify their archive keyring.
+                # Refuse an ambiguous rolling mirror rather than let it jump releases.
+                if not target and any(urllib.parse.urlsplit(uri).path.rstrip('/').endswith(('/debian', '/debian-security'))
+                                      for uri in uris) and any(re.match(r'^(stable|oldstable|oldoldstable|testing|unstable)(-|/|$)', suite)
+                                                              for suite in suites):
+                    raise RuntimeError(f'identify the Debian archive Signed-By keyring in {path}, or pin its suite explicitly')
+            if target and is_debian:
+                pinned = [suite for suite in pinned if '-backports' not in suite and '-proposed-updates' not in suite]
+            disabled = target and (not is_debian or not pinned)
+            if disabled:
+                parts[index] = replace_field(part, 'Enabled', 'no') if path.suffix == '.sources' else '# simpleupdate release upgrade: ' + part
+            else:
+                if target:
+                    pinned = [target + suite[len(codename):] for suite in pinned]
+                    pinned = [suite.replace('/updates', '-security') for suite in pinned]
+                found |= is_debian and 'deb' in types and 'main' in components and (target or codename) in pinned
+                value = ' '.join(pinned)
+                parts[index] = (replace_field(part, 'Suites', value) if path.suffix == '.sources'
+                                else part[:match.start(4)] + value + part[match.end(4):])
+        updated = ''.join(parts)
+        if updated != text:
+            changes[path] = updated
+    if not found:
+        raise RuntimeError('no active Debian base binary repository found; configure codename-based Debian sources first')
+    return changes
+
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+def write_text_atomic(path, text):
+    # Keep configuration symlinks intact and replace the target only after the
+    # complete contents are on disk. Also used for the small interruption marker.
+    path = path.resolve()
+    owner = path.stat() if path.exists() else None
+    fd, name = tempfile.mkstemp(prefix='.simpleupdate-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as output:
+            output.write(text)
+            output.flush()
+            os.fsync(output.fileno())
+        if owner:
+            shutil.copystat(path, name)
+            os.chown(name, owner.st_uid, owner.st_gid)
+        else:
+            os.chmod(name, 0o644)
+        os.replace(name, path)
+        sync_directory(path.parent)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+def write_apt_sources(changes, backup=True):
+    for path, text in changes.items():
+        if backup:
+            saved = path.with_name(path.name + '.simpleupdate-backup')
+            if not saved.exists():
+                shutil.copy2(path, saved)
+        say(f'Updating APT source: {path}')
+        write_text_atomic(path, text)
+
+def refresh_apt():
+    # A fixed codename may become oldstable. Accept that status change only;
+    # do not allow a repository to silently change its release codename.
+    run(['apt-get', 'update', '--allow-releaseinfo-change-suite', '-o', 'APT::Update::Error-Mode=any'])
+
+def validate_apt_release(codename):
+    # Examine the indexes APT will actually use, including unfamiliar mirrors
+    # and alternate source paths. URI recognition alone cannot enforce this.
+    output = run(['apt-get', 'indextargets', '--format', '$(ORIGIN)|$(CODENAME)|$(COMPONENT)',
+                  'Identifier: Packages'], capture_output=True, text=True).stdout
+    found = False
+    for line in output.splitlines():
+        fields = line.split('|')
+        if len(fields) != 3:
+            raise RuntimeError('cannot read APT package-index release information')
+        origin, release, component = fields
+        if origin.startswith('Debian') or origin.lower() == 'liquorix':
+            if pinned_suite(release, codename) != release:
+                raise RuntimeError(f'APT index has a rolling codename {release!r}; refresh codename-based sources first')
+            found |= origin == 'Debian' and release == codename and component == 'main'
+    if not found:
+        raise RuntimeError(f'APT has no Debian {codename} base package index; refresh its codename-based repositories first')
+
+def require_console():
+    try:
+        tty = os.ttyname(sys.stdin.fileno())
+    except (OSError, ValueError):
+        tty = ''
+    # Debian sudo may allocate a pseudo-terminal even when invoked on tty2.
+    # Sudo supplies the caller's actual terminal in SUDO_TTY.
+    if os.environ.get('SUDO_UID') and os.environ.get('SUDO_TTY'):
+        tty = os.environ['SUDO_TTY']
+    if (not sys.stdin.isatty() or not sys.stdout.isatty()
+            or not re.fullmatch(r'/dev/tty[1-9][0-9]*', tty)):
+        raise RuntimeError('log out of SimpleWM, switch to a text console with Ctrl+Alt+F2, '
+                           'log in and run simpleupdate --release-upgrade there')
+    for comm in Path('/proc').glob('[0-9]*/comm'):
+        try:
+            running = comm.read_text().strip() == 'simplewm'
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if running:
+            raise RuntimeError('SimpleWM is still running; log out of every SimpleWM session before upgrading')
+
+def release_notes(target):
+    return f'https://www.debian.org/releases/{target[1]}/release-notes/'
+
+def pending_release():
+    try:
+        state = json.loads(PENDING_RELEASE.read_text())
+    except FileNotFoundError:
+        return None
+    except (ValueError, OSError) as error:
+        raise RuntimeError(f'cannot read interrupted-upgrade record {PENDING_RELEASE}: {error}') from error
+    target = state.get('target') if isinstance(state, dict) else None
+    if (not isinstance(target, list) or len(target) != 2 or type(target[0]) is not int
+            or not isinstance(target[1], str) or not re.fullmatch(r'[a-z]+', target[1])
+            or not isinstance(state.get('backup'), str)
+            or ('preflight' in state and not isinstance(state['preflight'], str))):
+        raise RuntimeError(f'invalid interrupted-upgrade record: {PENDING_RELEASE}; inspect it before continuing')
+    return state
+
+def remember_release(target, backup, preflight=None):
+    PENDING_RELEASE.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    sync_directory(PENDING_RELEASE.parent.parent)
+    state = {'target': list(target), 'backup': str(backup)}
+    if preflight:
+        state['preflight'] = str(preflight)
+        state['preflight_sha256'] = hashlib.sha256((Path(preflight) / 'proof.json').read_bytes()).hexdigest()
+    write_text_atomic(PENDING_RELEASE, json.dumps(state) + '\n')
+
+def complete_release():
+    state = pending_release()
+    PENDING_RELEASE.unlink()
+    sync_directory(PENDING_RELEASE.parent)
+    if state and state.get('preflight'):
+        saved = Path(state['preflight'])
+        if saved.parent == PENDING_RELEASE.parent and saved.name.startswith('release-build-'):
+            shutil.rmtree(saved)
+
+def require_release_recovery(args, state, current):
+    say(f'An unfinished Debian {state["target"][0]} upgrade requires both source rebuilds. '
+        f'Configuration backup: {state["backup"]}')
+    if (not args.rebuild or args.os_only or args.suite_only or args.wm_only
+            or args.wm_local or args.check or args.release_upgrade):
+        raise RuntimeError('complete APT recovery from a text console, then run simpleupdate --rebuild; '
+                           'ordinary updates stay blocked until both rebuilds succeed')
+    require_console()
+    if current != tuple(state['target']):
+        raise RuntimeError('Debian has not reached the approved release; finish the documented APT upgrade '
+                           'and correct mixed sources before running simpleupdate --rebuild')
+    check_package_state()
+    args.recover_release = True
+    if state.get('preflight'):
+        args.release_payload, proof = saved_preflight(state)
+        args.suite_packages = proof['suite_packages']
+
+def check_package_state():
+    if run(['dpkg', '--audit'], capture_output=True, text=True).stdout.strip():
+        raise RuntimeError('dpkg reports unfinished package work; resolve it before a release upgrade or rebuild')
+    held = run(['apt-mark', 'showhold'], capture_output=True, text=True).stdout.strip()
+    if held:
+        raise RuntimeError(f'review and resolve held packages before a release upgrade or rebuild: {held}')
+
+def offer_release(args, current, latest):
+    if latest is None or latest[0] <= current[0]:
+        if args.release_upgrade:
+            say('No newer stable Debian release is available')
+        return False
+    say(f'Debian {latest[0]} ({latest[1]}) is available; installed: Debian {current[0]} ({current[1]})')
+    say(f'Read the release notes before upgrading: {release_notes(latest)}')
+    if latest[0] != current[0] + 1:
+        message = 'Debian supports upgrades from the previous release only; upgrade one release at a time'
+        if args.release_upgrade:
+            raise RuntimeError(message)
+        say(message)
+        return False
+    say('SimpleWM must pass a build in the target Debian environment first. '
+        'A failed or interrupted Debian upgrade may require manual recovery; there is no automatic rollback.')
+    if args.check or args.os_only or not sys.stdin.isatty():
+        say('To approve an upgrade and rebuild both components, run simpleupdate --release-upgrade from a text console')
+        if args.release_upgrade:
+            raise RuntimeError('a release upgrade requires interactive approval on a text console')
+        return False
+    if args.release_upgrade:
+        require_console()
+    decline = 'cancel' if args.release_upgrade else 'keep ordinary updates'
+    try:
+        answer = input(f'Prepare and test the Debian {latest[1]} upgrade? Type {latest[1]} to start preflight, '
+                       f'or press Enter to {decline}: ')
+    except EOFError:
+        answer = ''
+    if answer.strip() != latest[1]:
+        say('Release upgrade declined; keeping the installed Debian release')
+        return False
+    require_console()
+    return True
+
+def dry_run(args):
+    say('Dry run: no system writes, sudo, commands, builds or installations')
+    state = pending_release()
+    if state:
+        say(f'Unfinished Debian upgrade to {state["target"][1]}; configuration backup: {state["backup"]}')
+        say('Ordinary updates are blocked. Complete APT recovery, then use simpleupdate --rebuild from a text console')
+        say('Both source components must rebuild successfully before the interruption record is cleared')
+        return
+    current = debian_release()
+    target = None
+    if not args.suite_only and not args.wm_only:
+        latest = check_stable(required=args.release_upgrade)
+        say(f'Installed Debian {current[0]} ({current[1]})')
+        if latest and latest[0] > current[0]:
+            say(f'New stable Debian {latest[0]} ({latest[1]}): {release_notes(latest)}')
+            if args.release_upgrade:
+                if latest[0] != current[0] + 1:
+                    raise RuntimeError('upgrade one Debian release at a time; skipping releases is unsupported')
+                target = latest[1]
+        elif args.release_upgrade:
+            say('No newer stable Debian release is available')
+            return
+        if target:
+            say('Would require approval on a text console with every SimpleWM session stopped')
+            say('Would check package state, build tools and both Git repositories before changing Debian')
+            say('Would create a temporary target Debian userspace with mmdebstrap, discover its wlroots development package, '
+                'and compile/check/stage SimpleWM using only target compilers, headers and libraries')
+            say('Would cancel on target build/check failure, then require final approval before any installed-release APT changes')
+            say(f'Would back up /etc, SimpleWM/SimpleSuite configuration and package selections under {BACKUPS}')
+            say('Would finish current-release updates, then disable third-party/backports/proposed-updates sources')
+            say('Would run apt-get update, apt-get upgrade --without-new-pkgs, then apt-get full-upgrade with interactive package prompts')
+            say('Would rebuild SimpleSuite and install the verified target SimpleWM build, even when revisions are unchanged')
+            say('Source changes may be needed; rebuilds can fail; Debian has no automatic rollback')
+        else:
+            say('Would run apt-get update and ' + ('simulate (-s)' if args.check else 'run')
+                + ' the ordinary apt-get full-upgrade within the installed release')
+    changes = apt_source_changes(current[1], target)
+    for path in changes:
+        say(f'Would update APT source: {path}')
+    say(f'Would pin Debian repositories to {target or current[1]} before APT operations, including build dependencies')
+    if not args.os_only:
+        if args.check:
+            say('Would report fetched Git revisions without building or installing')
+        elif not target:
+            say('Would rebuild unchanged revisions (--rebuild)' if args.rebuild else 'Would build/install changed Git revisions only')
+        if not args.wm_only:
+            say(f'Would fetch {OFFICIAL}')
+            if not args.check:
+                say('Would use the existing SimpleSuite build/install routines (including Simpleterm)')
+        if not args.suite_only:
+            say(f'Would fetch {OFFICIAL_WM}' if not args.wm_local else f'Would use local SimpleWM source: {args.wm_local}')
+            if not args.check:
+                say('Would use the existing SimpleWM build/config/library checks and staged system installation')
+        if args.verify and not args.check:
+            say('Would also run the developer test suites (--verify)')
 
 def installed_revision(path=MANIFEST, key='simplesuite_source_sha'):
     try:
@@ -104,7 +501,7 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
     git = ['git', '-c', 'http.sslVerify=true', '-c', 'http.followRedirects=false',
            '-c', 'credential.helper=', '-c', 'core.hooksPath=/dev/null',
            '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never']
-    opts = dict(env=env, preexec_fn=demote)
+    opts = dict(env=env, preexec_fn=demote, cwd=source.parent)
     run(git + ['init', '--quiet', str(source)], **opts)
     run(git + ['-C', str(source), 'remote', 'add', 'origin', origin], **opts)
     # Both components need commit ancestry, including after a fresh ISO install.
@@ -257,14 +654,18 @@ def wm_repository_exists():
 
 def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     common = ['make', '-C', str(source), 'PREFIX=/usr/local']
+    if env.get('SIMPLEUPDATE_WM_PKGS'):
+        common.append('PKGS=' + env['SIMPLEUPDATE_WM_PKGS'])
     opts = dict(env=env, preexec_fn=demote)
     say(f'Building SimpleWM {sha[:18]}')
     run(common + ['CFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter'], **opts)
     run([str(source / 'build/simplewm'), '--check-config', '-c', str(source / 'config')], **opts)
     if verify:
         for check in ('config-check.py', 'update-check.py', 'update-logic-check.py', 'update-plain-check.py',
+                      'update-release-check.py', 'update-target-check.py',
                       'theme-check.py', 'setup-check.py', 'image-check.py'):
-            run(['python3', str(source / 'tests' / check)], **opts)
+            if (source / 'tests' / check).is_file():
+                run(['python3', str(source / 'tests' / check)], **opts)
         run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)
     run(common + [f'DESTDIR={stage}', 'install'], **opts)
     local = stage / 'usr/local'
@@ -273,22 +674,29 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
             raise RuntimeError(f'SimpleWM staging omitted executable {name}')
     shutil.copytree(source, local / 'share/simplewm/source',
                     ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'), symlinks=True)
-    (local / 'share/simplewm/install-manifest').write_text(f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n')
+    provenance = f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n'
+    if env.get('SIMPLEUPDATE_WM_PKGS'):
+        provenance += 'wlroots_pkg_config=' + env['SIMPLEUPDATE_WM_PKGS'].split()[0] + '\n'
+    (local / 'share/simplewm/install-manifest').write_text(provenance)
     if not sha.startswith('local-'):
         run(['git', '-C', str(source), 'branch', '-f', 'main', sha], **opts)
         run(['git', '-C', str(source), 'bundle', 'create', str(local / 'share/simplewm/source.bundle'), 'main'], **opts)
     result = run(['ldd', str(local / 'bin/simplewm')], capture_output=True, text=True)
     if 'not found' in result.stdout:
         raise RuntimeError('SimpleWM has missing runtime libraries')
+    if env.get('SIMPLEUPDATE_WM_PKGS'):
+        verify_wm_abi(local / 'bin/simplewm', env['SIMPLEUPDATE_WM_PKGS'].split()[0])
     return local
 
-def update_wm(args, work, env, demote, uid, gid, log):
+def update_wm(args, work, env, demote, uid, gid, log, prepared=None):
     current = installed_revision(WM_MANIFEST, 'simplewm_source_sha')
-    if not args.wm_local and not current:
+    if prepared is None and not args.wm_local and not current:
         say('SimpleWM is not installed; skipping it')
         return
     source = work / 'simplewm'
-    if args.wm_local:
+    if prepared is not None:
+        original = None
+    elif args.wm_local:
         original = args.wm_local.resolve()
     elif wm_repository_exists():
         original = None
@@ -311,10 +719,12 @@ def update_wm(args, work, env, demote, uid, gid, log):
                 raise RuntimeError('local SimpleWM source contains a symlink')
             os.chown(path, uid, gid)
         sha = source_digest(source)
+    elif prepared is not None:
+        source, sha = prepared
     else:
         say(f'Fetching only {OFFICIAL_WM}')
         sha = fetch_source(source, env, demote, OFFICIAL_WM)
-    if original is None and not published_update_allowed('SimpleWM', source, sha, current, env, demote):
+    if prepared is None and original is None and not published_update_allowed('SimpleWM', source, sha, current, env, demote):
         return
     if current == sha and not args.rebuild:
         say(f'SimpleWM {sha[:18]} is current; no build needed')
@@ -322,7 +732,17 @@ def update_wm(args, work, env, demote, uid, gid, log):
     if args.check:
         say(f'SimpleWM {current or "unrecorded"} -> {sha}; no installation')
         return
-    run(['apt-get', '-y', '--no-install-recommends', 'install', *WM_BUILD_PACKAGES])
+    interactive = prepared is not None or getattr(args, 'recover_release', False)
+    packages = WM_BUILD_PACKAGES
+    if (getattr(args, 'recover_release', False) or (source / 'build-dependencies.json').is_file()
+            or (WM_MANIFEST.exists() and 'wlroots_pkg_config=' in WM_MANIFEST.read_text())):
+        packages, modules = discover_wm_dependencies(source)
+        run(['apt-get', *([] if interactive else ['-y']), '--no-install-recommends', 'install', *packages],
+            interactive=interactive)
+        env = env | {'SIMPLEUPDATE_WM_PKGS': ' '.join(wm_pkg_config(packages, modules))}
+    else:
+        run(['apt-get', *([] if interactive else ['-y']), '--no-install-recommends', 'install', *packages],
+        interactive=interactive)
     stage = work / 'wm-stage'
     stage.mkdir(); os.chown(stage, uid, gid)
     log.write(f'SimpleWM source: {OFFICIAL_WM if original is None else original}\nRevision: {sha}\n')
@@ -330,14 +750,18 @@ def update_wm(args, work, env, demote, uid, gid, log):
     local = build_and_test_wm(source, stage, sha, env, demote, args.verify)
     install_transaction(local, PREFIX)
     log.write(f'SimpleWM installed; full verification={args.verify}.\n'); log.flush()
-    say('SimpleWM installed; the running session stays available until your next login')
+    say('SimpleWM installed; use the rebuilt compositor at your next login')
+    return True
 
-def update_suite(args, work, env, demote, uid, gid, log):
-    say(f'Fetching only {OFFICIAL}')
-    source = work / 'source'
-    sha = fetch_source(source, env, demote)
+def update_suite(args, work, env, demote, uid, gid, log, prepared=None):
+    if prepared is None:
+        say(f'Fetching only {OFFICIAL}')
+        source = work / 'source'
+        sha = fetch_source(source, env, demote)
+    else:
+        source, sha = prepared
     installed = installed_revision(MANIFEST)
-    if not published_update_allowed('SimpleSuite', source, sha, installed, env, demote):
+    if prepared is None and not published_update_allowed('SimpleSuite', source, sha, installed, env, demote):
         return
     if sha == installed and not args.rebuild:
         say(f'SimpleSuite {sha[:12]} is current; no build needed')
@@ -345,7 +769,10 @@ def update_suite(args, work, env, demote, uid, gid, log):
     if args.check:
         say(f'SimpleSuite {installed or "unrecorded"} -> {sha}; no installation')
         return
-    run(['apt-get', '-y', '--no-install-recommends', 'install', *BUILD_PACKAGES])
+    interactive = prepared is not None or getattr(args, 'recover_release', False)
+    run(['apt-get', *([] if interactive else ['-y']), '--no-install-recommends', 'install',
+         *getattr(args, 'suite_packages', BUILD_PACKAGES)],
+        interactive=interactive)
     stage = work / 'stage'
     stage.mkdir(); os.chown(stage, uid, gid)
     log.write(f'Official source: {OFFICIAL}\nRevision: {sha}\n'); log.flush()
@@ -354,11 +781,328 @@ def update_suite(args, work, env, demote, uid, gid, log):
     install_transaction(local, PREFIX)
     log.write('SimpleSuite installation committed.\n')
     say(f'SimpleSuite {sha[:12]} installed; existing applications can finish normally')
+    return True
+
+def backup_release_configuration(current, target):
+    BACKUPS.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix=f'{current[1]}-to-{target[1]}-', dir=BACKUPS))
+    directory.chmod(0o700)
+    paths = [SYSTEM_CONFIG, OS_RELEASE.resolve(), DEBIAN_OS_RELEASE, *PACKAGE_STATE]
+    for component in ('simplewm', 'simplesuite'):
+        base = PREFIX / 'share' / component
+        paths += [base / 'config', base / 'install-manifest', base / 'source.bundle']
+    owner = pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid())))
+    home = Path(owner.pw_dir)
+    paths += [home / '.config', home / '.profile', home / '.bashrc']
+    for path in dict.fromkeys(paths):
+        if not path.exists() and not path.is_symlink():
+            continue
+        destination = directory / path.relative_to('/')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_dir() and not path.is_symlink():
+            shutil.copytree(path, destination, symlinks=True)
+        else:
+            shutil.copy2(path, destination, follow_symlinks=False)
+    # The normal tree preserves links for restoration. Also save their actual
+    # contents: SimpleWM and Scriptorium commonly keep configuration elsewhere.
+    # Only follow links in configuration, not all of /etc/alternatives.
+    linked_roots = [APT_ROOT, home / '.config', home / '.profile', home / '.bashrc',
+                    PREFIX / 'share/simplewm/config', PREFIX / 'share/simplesuite/config']
+    with tarfile.open(directory / 'linked-configuration.tar.gz', 'w:gz', dereference=True) as archive:
+        for base in linked_roots:
+            candidates = [base] if base.is_symlink() else base.rglob('*') if base.is_dir() else []
+            for path in candidates:
+                if path.is_symlink() and path.exists():
+                    archive.add(path, arcname=str(path.relative_to('/')))
+    selections = run(['dpkg', '--get-selections'], capture_output=True, text=True).stdout
+    (directory / 'package-selections').write_text(selections)
+    # Finish persisting the backup before any package changes can begin.
+    for path in directory.rglob('*'):
+        if not path.is_symlink() and path.is_file():
+            with path.open('rb') as saved:
+                os.fsync(saved.fileno())
+    for path in sorted(directory.rglob('*'), reverse=True):
+        if not path.is_symlink() and path.is_dir():
+            sync_directory(path)
+    sync_directory(directory)
+    sync_directory(BACKUPS)
+    say(f'Configuration backup: {directory}; this is not a system snapshot or automatic rollback')
+    return directory
+
+def refresh_simpleos_identity(target):
+    info = os_release_fields(OS_RELEASE)
+    if info.get('ID') != 'simpleos':
+        return
+    version = info['VERSION_ID']
+    replacements = {
+        'PRETTY_NAME': f'"SimpleOS {version} (Debian {target[0]})"',
+        'VERSION': f'"{version} (Debian {target[0]} {target[1]})"',
+        'VERSION_CODENAME': target[1],
+    }
+    text = OS_RELEASE.read_text()
+    for key, value in replacements.items():
+        text = re.sub(r'^' + key + r'=.*$', key + '=' + value, text, flags=re.MULTILINE)
+    write_text_atomic(OS_RELEASE, text)
+
+def discover_wm_dependencies(source):
+    """Select the newest development ABI published in this environment's APT."""
+    manifest = source / 'build-dependencies.json'
+    if manifest.exists():
+        data = json.loads(manifest.read_text())
+        packages, modules = data.get('packages'), data.get('pkg_config')
+    else:
+        # Older published trees have a simple PKGS assignment and no manifest.
+        packages = [p for p in WM_BUILD_PACKAGES if not p.startswith('libwlroots')]
+        match = re.search(r'^PKGS\s*[:?]?=\s*(.+)$', (source / 'Makefile').read_text(), re.MULTILINE)
+        modules = [m for m in match[1].split() if not m.startswith('wlroots')] if match else None
+    if (not isinstance(packages, list) or not isinstance(modules, list) or not modules
+            or not all(isinstance(p, str) and re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', p) for p in packages)
+            or not all(isinstance(m, str) and re.fullmatch(r'[A-Za-z0-9_.+-]+', m) for m in modules)):
+        raise RuntimeError('source must declare build packages and pkg-config modules in build-dependencies.json')
+    names = run(['apt-cache', 'search', '--names-only', '^libwlroots(-[0-9.]+)?-dev$'],
+                capture_output=True, text=True).stdout
+    selected, version = None, None
+    for line in names.splitlines():
+        package = line.split()[0]
+        if not re.fullmatch(r'libwlroots(-[0-9.]+)?-dev', package):
+            continue
+        policy = run(['apt-cache', 'policy', package], capture_output=True, text=True).stdout
+        candidate = re.search(r'^\s*Candidate:\s*(\S+)', policy, re.MULTILINE)
+        if not candidate or candidate[1] == '(none)':
+            continue
+        available = candidate[1]
+        newer = (version is None or subprocess.run(['dpkg', '--compare-versions', available, 'gt', version],
+                                                  check=False).returncode == 0)
+        if newer:
+            selected, version = package, available
+    if selected is None:
+        raise RuntimeError('target Debian repositories provide no installable wlroots development package')
+    say(f'Target wlroots development package: {selected} ({version}); older ABIs will not be tried')
+    packages = [p for p in packages if not re.fullmatch(r'libwlroots(-[0-9.]+)?-dev', p)]
+    modules = [m for m in modules if not re.fullmatch(r'wlroots(-[0-9.]+)?', m)]
+    return list(dict.fromkeys([*packages, selected])), modules
+
+def verify_wm_abi(binary, module):
+    flags = run(['pkg-config', '--libs-only-l', module], capture_output=True, text=True).stdout.split()
+    expected = ['lib' + flag[2:] + '.so' for flag in flags if flag.startswith('-lwlroots')]
+    linked = run(['ldd', str(binary)], capture_output=True, text=True).stdout
+    if not expected or not all(name in linked for name in expected):
+        raise RuntimeError('compiled SimpleWM is not linked against the selected target wlroots ABI')
+
+def wm_pkg_config(packages, modules):
+    package = next(p for p in packages if re.fullmatch(r'libwlroots(-[0-9.]+)?-dev', p))
+    files = run(['dpkg-query', '-L', package], capture_output=True, text=True).stdout
+    names = [Path(p).stem for p in files.splitlines()
+             if re.fullmatch(r'wlroots(-[0-9.]+)?\.pc', Path(p).name)]
+    if len(names) != 1:
+        raise RuntimeError(f'cannot identify the pkg-config module supplied by {package}')
+    result = [names[0], *modules]
+    run(['pkg-config', '--exists', *result])
+    version = run(['pkg-config', '--modversion', names[0]], capture_output=True, text=True).stdout.strip()
+    say(f'Building against actual pkg-config module {names[0]}, version {version}')
+    return result
+
+def bootstrap_tool(work, env, demote, uid, gid):
+    installed = shutil.which('mmdebstrap')
+    if installed:
+        return installed
+    # Download the authenticated package into the work directory; never install
+    # bootstrap tools or refresh package caches on the host during preflight.
+    directory = work / 'bootstrap'; directory.mkdir(); os.chown(directory, uid, gid)
+    run(['apt-get', 'download', 'mmdebstrap'], cwd=directory, env=env, preexec_fn=demote)
+    os.chown(directory, 0, 0); directory.chmod(0o700)
+    archives = list(directory.glob('mmdebstrap_*.deb'))
+    if len(archives) != 1:
+        raise RuntimeError('cannot obtain the mmdebstrap bootstrap tool from current signed APT indexes')
+    metadata = run(['apt-cache', 'show', 'mmdebstrap'], capture_output=True, text=True).stdout
+    records = [release_fields(block) for block in re.split(r'\n\s*\n', metadata)]
+    checksum = next((record.get('SHA256') for record in records
+                     if Path(record.get('Filename', '')).name == archives[0].name), None)
+    if not checksum or hashlib.sha256(archives[0].read_bytes()).hexdigest() != checksum:
+        raise RuntimeError('mmdebstrap download does not match signed APT package metadata')
+    run(['dpkg-deb', '--extract', str(archives[0]), str(directory / 'tool')])
+    return str(directory / 'tool/usr/bin/mmdebstrap')
+
+def target_preflight(args, target, prepared, work, env, demote, uid, gid):
+    if not TARGET_HELPER.is_file():
+        raise RuntimeError(f'missing target build helper: {TARGET_HELPER}')
+    # The target-root parent cannot be replaced by the unprivileged build user.
+    os.chown(work, 0, 0)
+    work.chmod(0o755)
+    architecture = run(['dpkg', '--print-architecture'], capture_output=True, text=True).stdout.strip()
+    if not re.fullmatch(r'[a-z0-9-]+', architecture):
+        raise RuntimeError('cannot determine the native Debian architecture')
+    tool = bootstrap_tool(work, env, demote, uid, gid)
+    root = work / 'target-root'
+    # mmdebstrap unshares its mount namespace, installs only into this directory,
+    # and checks signed APT metadata. No host headers/libraries are bind-mounted.
+    run([tool, '--mode=unshare', '--variant=apt', '--format=directory',
+         '--architectures=' + architecture, '--components=main',
+         '--include=python3,git,ca-certificates,build-essential,pkg-config,binutils,util-linux,mount,dbus',
+         target[1], str(root),
+         f'deb https://deb.debian.org/debian {target[1]} main',
+         f'deb https://deb.debian.org/debian {target[1]}-updates main',
+         f'deb https://security.debian.org/debian-security {target[1]}-security main'])
+    control = root / 'simpleupdate-preflight'; control.mkdir()
+    shutil.copy2(Path(__file__).resolve(), control / 'updater.py')
+    shutil.copy2(TARGET_HELPER, control / 'build.py')
+    plan = {'target': list(target), 'wm_sha': prepared['SimpleWM'][1],
+            'suite_packages': BUILD_PACKAGES, 'wm_packages': WM_BUILD_PACKAGES, 'verify': args.verify}
+    (control / 'plan.json').write_text(json.dumps(plan))
+    policy = root / 'usr/sbin/policy-rc.d'
+    policy.write_text('#!/bin/sh\nexit 101\n'); policy.chmod(0o755)
+    say(f'Compiling and verifying SimpleWM inside Debian {target[1]} before any installed-release changes')
+    run(['unshare', '--mount', '--ipc', '--uts', '--pid', '--fork', '--kill-child', '--propagation=private',
+         '--mount-proc=' + str(root / 'proc'),
+         'chroot', str(root), '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+         'HOME=/root', 'LC_ALL=C.UTF-8', 'DEBIAN_FRONTEND=noninteractive',
+         '/usr/bin/python3', '/simpleupdate-preflight/build.py', '/simpleupdate-preflight/plan.json'])
+    proof = json.loads((control / 'result.json').read_text())
+    if proof.get('target') != list(target) or proof.get('wm_sha') != prepared['SimpleWM'][1]:
+        raise RuntimeError('target build result does not match the approved Debian/source revisions')
+    local = root / 'work/wm-stage/usr/local'
+    validate_local(local)
+    if payload_digest(local) != proof.get('digest'):
+        raise RuntimeError('target build payload failed integrity verification')
+    return local, proof
+
+def payload_digest(stage):
+    digest = hashlib.sha256()
+    for path in sorted(stage.rglob('*')):
+        if path.is_dir() and not path.is_symlink():
+            continue
+        digest.update(str(path.relative_to(stage)).encode() + b'\0')
+        digest.update(str(path.lstat().st_mode & 0o777).encode() + b'\0')
+        digest.update(os.readlink(path).encode() if path.is_symlink() else path.read_bytes())
+        digest.update(b'\0')
+    return digest.hexdigest()
+
+def persist_preflight(local, proof):
+    PENDING_RELEASE.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    saved = Path(tempfile.mkdtemp(prefix='release-build-', dir=PENDING_RELEASE.parent))
+    shutil.copytree(local, saved / 'local', symlinks=True)
+    write_text_atomic(saved / 'proof.json', json.dumps(proof))
+    for path in (saved / 'local').rglob('*'):
+        if path.is_file() and not path.is_symlink():
+            with path.open('rb') as file:
+                os.fsync(file.fileno())
+    for path in sorted(saved.rglob('*'), reverse=True):
+        if path.is_dir() and not path.is_symlink():
+            sync_directory(path)
+    sync_directory(saved); sync_directory(saved.parent)
+    return saved
+
+def saved_preflight(state):
+    saved = Path(state['preflight'])
+    if saved.is_symlink() or saved.parent != PENDING_RELEASE.parent or not saved.name.startswith('release-build-'):
+        raise RuntimeError('invalid saved preflight path; inspect the interrupted-upgrade record')
+    metadata = (saved / 'proof.json').read_bytes()
+    if hashlib.sha256(metadata).hexdigest() != state.get('preflight_sha256'):
+        raise RuntimeError('saved target build metadata is incomplete or corrupt; inspect the recovery record')
+    proof = json.loads(metadata)
+    local = saved / 'local'
+    validate_local(local)
+    if proof.get('target') != state['target'] or payload_digest(local) != proof.get('digest'):
+        raise RuntimeError('saved target build is incomplete or corrupt; recover APT and prepare a new validated build')
+    for name in ('wm_packages', 'suite_packages'):
+        packages = proof.get(name)
+        if (not isinstance(packages, list) or not packages or
+                not all(isinstance(p, str) and re.fullmatch(r'[a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?=\S+', p)
+                        for p in packages)):
+            raise RuntimeError('saved target build contains invalid package version information')
+    return local, proof
+
+def install_preflight_wm(local, module):
+    binary = local / 'bin/simplewm'
+    result = run(['ldd', str(binary)], capture_output=True, text=True)
+    if 'not found' in result.stdout:
+        raise RuntimeError('target-built SimpleWM has missing libraries on the upgraded system; installation cancelled')
+    verify_wm_abi(binary, module)
+    run([str(binary), '--check-config', '-c', str(local / 'share/simplewm/config')])
+    install_transaction(local, PREFIX)
+    say('Verified target-built SimpleWM installed; reboot before starting the new session')
+    return True
+
+def upgrade_release(args, current, target, work, env, demote, uid, gid, log):
+    require_console()
+    if pending_release():
+        raise RuntimeError('an interrupted release upgrade must be recovered before starting another')
+    # Validate both source plans and fetch both repositories before APT changes.
+    old_sources = apt_source_changes(current[1])
+    new_sources = apt_source_changes(current[1], target[1])
+    missing = [tool for tool in ('apt-get', 'apt-cache', 'dpkg', 'dpkg-deb', 'apt-mark',
+                                'git', 'unshare', 'chroot', 'perl') if not shutil.which(tool)]
+    if missing:
+        raise RuntimeError('install required build/update tools before upgrading: ' + ', '.join(missing))
+    check_package_state()
+    prepared = {}
+    for name, folder, origin, manifest, key in (
+            ('SimpleSuite', 'source', OFFICIAL, MANIFEST, 'simplesuite_source_sha'),
+            ('SimpleWM', 'simplewm', OFFICIAL_WM, WM_MANIFEST, 'simplewm_source_sha')):
+        source = work / folder
+        sha = fetch_source(source, env, demote, origin)
+        if not published_update_allowed(name, source, sha, installed_revision(manifest, key), env, demote):
+            raise RuntimeError(f'{name}: resolve local/ahead/divergent installed source before upgrading Debian; '
+                               'the release upgrade must rebuild both components')
+        prepared[name] = source, sha
+        say(f'{name} ready to rebuild from Git revision {sha}')
+    local, proof = target_preflight(args, target, prepared, work, env, demote, uid, gid)
+    say('Target SimpleWM compilation, configuration, linkage and session checks passed. '
+        'Debian upgrade failures can still require manual recovery; there is no automatic rollback.')
+    try:
+        approved = input(f'Final approval: type {target[1]} to upgrade the installed Debian system, or press Enter to cancel: ')
+    except EOFError:
+        approved = ''
+    if approved.strip() != target[1]:
+        say('Upgrade cancelled after preflight; installed Debian and configurations are unchanged')
+        return
+    require_console()
+    recover_transaction()
+    backup = backup_release_configuration(current, target)
+    saved = persist_preflight(local, proof)
+    remember_release(target, backup, saved)
+    try:
+        say(f'Finishing Debian {current[0]} updates before switching releases')
+        write_apt_sources(old_sources, backup=False)
+        refresh_apt()
+        validate_apt_release(current[1])
+        run(['apt-get', 'full-upgrade'], interactive=True)
+        check_package_state()
+        # Package maintainer scripts may have changed APT configuration during
+        # the old-release update; do not apply a stale, previously computed edit.
+        new_sources = apt_source_changes(current[1], target[1])
+        say(f'Switching Debian sources to {target[1]}; disabling third-party, backports and proposed-updates sources')
+        write_apt_sources(new_sources, backup=False)
+        refresh_apt()
+        validate_apt_release(target[1])
+        # Debian's documented two-part upgrade; allow package/conffile prompts.
+        run(['apt-get', 'upgrade', '--without-new-pkgs'], interactive=True)
+        run(['apt-get', 'full-upgrade'], interactive=True)
+        if debian_release() != target:
+            raise RuntimeError('APT did not install the expected Debian base-files release; check the APT transcript')
+        check_package_state()
+        refresh_simpleos_identity(target)
+        args.rebuild = True
+        args.suite_packages = proof['suite_packages']
+        suite = update_suite(args, work, env, demote, uid, gid, log, prepared=prepared['SimpleSuite'])
+        run(['apt-get', '--no-install-recommends', 'install', *proof['wm_packages']], interactive=True)
+        wm = install_preflight_wm(saved / 'local', proof['pkg_config'][0])
+        if not (suite and wm):
+            raise RuntimeError('both components must rebuild successfully before the release upgrade can finish')
+        complete_release()
+    except BaseException:
+        say(f'Release upgrade stopped. Debian may already be partly or fully upgraded; it has not been rolled back. '
+            f'Configuration backup: {backup}. Review the transcript and Debian release notes; '
+            'after completing APT recovery, retry builds from a text console with simpleupdate --rebuild.')
+        raise
+    say(f'Debian {target[0]} ({target[1]}) and both source rebuilds completed; reboot before starting SimpleWM')
+    say(f'Third-party repositories (including Liquorix) remain disabled. Restore only sources supporting {target[1]} '
+        f'after reviewing the original configuration in {backup}')
 
 def validate_local(stage):
     for item in stage.rglob('*'):
         relative = item.relative_to(stage)
-        if relative.parts[0] not in {'bin', 'sbin', 'share'}:
+        if relative.parts[0] not in {'bin', 'sbin', 'share', 'libexec'}:
             raise RuntimeError(f'unexpected staged path: {relative}')
         if item.is_symlink() and not item.resolve().is_relative_to(stage.resolve()):
             raise RuntimeError(f'staged symlink escapes the payload: {relative}')
@@ -461,6 +1205,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--verify', action='store_true', help='also run the full developer test suites (slow)')
     parser.add_argument('--check', action='store_true', help='report available updates without installing')
+    parser.add_argument('--dry-run', action='store_true', help='show planned operations without commands, sudo or system writes')
+    parser.add_argument('--release-upgrade', action='store_true', help='offer the next stable Debian release and rebuild both components (text console only)')
     parser.add_argument('--os-only', action='store_true', help='only Debian and Liquorix through APT')
     parser.add_argument('--suite-only', action='store_true', help='only official SimpleSuite')
     parser.add_argument('--wm-only', action='store_true', help='only SimpleWM')
@@ -471,55 +1217,94 @@ def main():
         parser.error('choose one update scope')
     if args.wm_local and (args.os_only or args.suite_only):
         parser.error('--wm-local requires a scope that includes SimpleWM')
+    if args.release_upgrade and (args.os_only or args.suite_only or args.wm_only or args.wm_local or args.check):
+        parser.error('--release-upgrade requires both components; use --dry-run to preview it')
+    if args.dry_run:
+        dry_run(args)
+        return
     if os.geteuid() != 0:
         os.execvp('sudo', ['sudo', str(Path(__file__).resolve()), *sys.argv[1:]])
     os.umask(0o022)
     os.environ['PATH'] = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-    lock = open('/run/lock/simpleupdate.lock', 'w')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        sys.exit('simpleupdate is already running')
-    logs = Path('/var/log/simpleupdate')
-    logs.mkdir(mode=0o755, exist_ok=True)
-    logfile = logs / (time.strftime('%Y-%m-%d_%H-%M-%S') + '.log')
-    LOG_STREAM = logfile.open('a')
-    say(f'Update transcript: {logfile}')
-    recover_transaction()
-    if not args.suite_only and not args.wm_only:
-        say('Refreshing Debian and Liquorix APT repositories')
-        run(['apt-get', 'update', '-o', 'APT::Update::Error-Mode=any'])
-        run(['apt-get', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold',
-             '-s' if args.check else '-y', 'full-upgrade'])
-    if args.os_only:
-        LOG_STREAM.close()
-        LOG_STREAM = None
-        return
-    uid, gid = build_identity()
-    work = Path(tempfile.mkdtemp(prefix='simpleupdate-', dir='/var/tmp'))
-    os.chown(work, uid, gid)
-    home = work / 'home'
-    home.mkdir(); os.chown(home, uid, gid)
-    env = safe_environment(home)
-    demote = as_user(uid, gid)
-    logs = Path('/var/log/simpleupdate')
-    logs.mkdir(mode=0o755, exist_ok=True)
-    LOG_STREAM.close()
-    try:
-        with logfile.open('a') as log:
-            LOG_STREAM = log
-            say(f'Update transcript: {logfile}')
-            if not args.wm_only:
-                update_suite(args, work, env, demote, uid, gid, log)
-            if not args.suite_only:
-                update_wm(args, work, env, demote, uid, gid, log)
+    with open('/run/lock/simpleupdate.lock', 'w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit('simpleupdate is already running')
+        logs = Path('/var/log/simpleupdate')
+        logs.mkdir(mode=0o755, exist_ok=True)
+        logfile = logs / (time.strftime('%Y-%m-%d_%H-%M-%S') + '.log')
+        work = None
+        upgrading = False
+        recovering = False
+        try:
+            with logfile.open('a') as log:
+                LOG_STREAM = log
+                say(f'Update transcript: {logfile}')
+                current = debian_release()
+                state = pending_release()
+                if state:
+                    require_release_recovery(args, state, current)
+                    recovering = True
+                elif not args.suite_only and not args.wm_only:
+                    latest = check_stable(required=args.release_upgrade)
+                    upgrading = offer_release(args, current, latest)
+                    if args.release_upgrade and not upgrading:
+                        return
+                if not upgrading:
+                    recover_transaction()
+                if not upgrading:
+                    changes = apt_source_changes(current[1])
+                    if args.check and changes:
+                        raise RuntimeError('APT sources need codename pinning; preview with --dry-run, then run simpleupdate to apply it')
+                    write_apt_sources(changes)
+                    if changes or (not args.suite_only and not args.wm_only):
+                        say(f'Refreshing Debian {current[1]} and Liquorix APT repositories')
+                        refresh_apt()
+                    validate_apt_release(current[1])
+                    if not args.suite_only and not args.wm_only:
+                        if recovering:
+                            run(['apt-get', 'full-upgrade'], interactive=True)
+                            check_package_state()
+                            refresh_simpleos_identity(tuple(state['target']))
+                        else:
+                            run(['apt-get', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold',
+                                 '-s' if args.check else '-y', 'full-upgrade'])
+                if args.os_only:
+                    return
+                uid, gid = build_identity()
+                work = Path(tempfile.mkdtemp(prefix='simpleupdate-', dir='/var/tmp'))
+                os.chown(work, uid, gid)
+                home = work / 'home'
+                home.mkdir(); os.chown(home, uid, gid)
+                env = safe_environment(home)
+                demote = as_user(uid, gid)
+                if upgrading:
+                    upgrade_release(args, current, latest, work, env, demote, uid, gid, log)
+                else:
+                    rebuilt = []
+                    if not args.wm_only:
+                        rebuilt.append(update_suite(args, work, env, demote, uid, gid, log))
+                    if not args.suite_only:
+                        if recovering and getattr(args, 'release_payload', None):
+                            _, proof = saved_preflight(state)
+                            run(['apt-get', '--no-install-recommends', 'install', *proof['wm_packages']], interactive=True)
+                            rebuilt.append(install_preflight_wm(args.release_payload, proof['pkg_config'][0]))
+                        else:
+                            rebuilt.append(update_wm(args, work, env, demote, uid, gid, log))
+                    if recovering:
+                        if len(rebuilt) != 2 or not all(rebuilt):
+                            raise RuntimeError('both components must rebuild; resolve any preserved local/ahead/divergent source first')
+                        complete_release()
+                        say('Both release-recovery rebuilds completed; reboot before starting SimpleWM')
+        except BaseException as error:
+            say(f'Update failed: {error}.' + ('' if upgrading or recovering else
+                ' A failing source component keeps its binaries; completed components remain updated.'))
+            raise
+        finally:
             LOG_STREAM = None
-    except BaseException as error:
-        LOG_STREAM = None
-        say(f'Update failed: {error}. A failing component keeps its working binaries; completed components remain updated.')
-        raise
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+            if work is not None:
+                shutil.rmtree(work, ignore_errors=True)
     if Path('/run/reboot-required').exists():
         say('A reboot is needed for the updated kernel or system libraries')
 

@@ -2,7 +2,8 @@ CC ?= cc
 PKG_CONFIG ?= pkg-config
 PREFIX ?= /usr/local
 BUILD = build
-PKGS = wlroots-0.18 wayland-server xkbcommon libinput xcb xcb-icccm
+WLROOTS_PKG ?= $(shell $(PKG_CONFIG) --list-all | awk '/^wlroots(-[0-9.]+)? / {print $$1}' | sort -V | tail -1)
+PKGS = $(WLROOTS_PKG) wayland-server xkbcommon libinput xcb xcb-icccm
 CPPFLAGS += -I. -I$(BUILD) -DWLR_USE_UNSTABLE -DXWAYLAND -D_POSIX_C_SOURCE=200809L -DVERSION=\"0.8.0\"
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit-function-declaration -Werror=incompatible-pointer-types
@@ -32,6 +33,7 @@ install: all
 	install -Dm644 HELP.txt $(DESTDIR)$(PREFIX)/share/simplewm/HELP.txt
 	install -Dm644 simplewm.desktop $(DESTDIR)$(PREFIX)/share/wayland-sessions/simplewm.desktop
 	for f in scripts/simplewm-* scripts/simplewmctl scripts/simpleupdate; do install -m755 $$f $(DESTDIR)$(PREFIX)/bin/; done
+	install -Dm755 scripts/simpleupdate-target $(DESTDIR)$(PREFIX)/libexec/simpleupdate-target
 	install -m755 scripts/wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/
 	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme
 	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme.sh
@@ -42,6 +44,7 @@ uninstall:
 	rm -rf $(DESTDIR)$(PREFIX)/share/simplewm $(DESTDIR)$(PREFIX)/share/doc/simplewm
 	rm -f $(DESTDIR)$(PREFIX)/share/wayland-sessions/simplewm.desktop
 	rm -f $(DESTDIR)$(PREFIX)/bin/wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme
+	rm -f $(DESTDIR)$(PREFIX)/libexec/simpleupdate-target
 clean:
 	rm -rf $(BUILD)
 .PHONY: all install uninstall clean

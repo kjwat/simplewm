@@ -69,7 +69,7 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
         def transport(args, **kwargs):
             args = list(map(str, args)); commands.append(args)
             if args[0] == 'apt-get':
-                return subprocess.CompletedProcess(args, 0)
+                return subprocess.CompletedProcess(args, 0, stdout='Debian|trixie|main\n' if 'indextargets' in args else '')
             if args[0] != 'git':
                 raise AssertionError(f'unexpected non-fixture command: {args}')
             if 'fetch' in args and args[-2] == 'origin':
@@ -130,6 +130,13 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
                 patch.object(update, 'install_transaction', side_effect=lambda stage, p=prefix: real_install(stage, p)),
                 contextlib.redirect_stdout(output),
             ]
+            if name == 'current':
+                # Release detection and APT source validation must also stay
+                # inside this fixture; the archived updater has no such hooks.
+                contexts += [patch.object(update, 'debian_release', return_value=(13, 'trixie')),
+                             patch.object(update, 'PENDING_RELEASE', base / 'run/release-upgrade.json'),
+                             patch.object(update, 'stable_release', return_value=(13, 'trixie')),
+                             patch.object(update, 'apt_source_changes', return_value={})]
             with contextlib.ExitStack() as stack:
                 for context in contexts: stack.enter_context(context)
                 update.main()

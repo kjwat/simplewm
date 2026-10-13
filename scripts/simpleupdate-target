@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+"""Run exclusively inside SimpleUpdate's temporary target Debian userspace."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import sys
+
+def main():
+    control = Path('/simpleupdate-preflight')
+    plan = json.loads((control / 'plan.json').read_text())
+    spec = importlib.util.spec_from_file_location('target_updater', control / 'updater.py')
+    update = importlib.util.module_from_spec(spec); spec.loader.exec_module(update)
+    identity = update.os_release_fields(Path('/etc/os-release'))
+    if identity.get('ID') != 'debian' or identity.get('VERSION_CODENAME') != plan['target'][1]:
+        raise RuntimeError('temporary userspace does not identify as the requested Debian release')
+    # mmdebstrap cleans its temporary device mounts as well as package lists.
+    # Create only userspace devices; never expose the host's disks or /dev tree.
+    for name, minor in (('null', 3), ('zero', 5), ('random', 8), ('urandom', 9)):
+        device = Path('/dev') / name
+        device.unlink(missing_ok=True)
+        os.mknod(device, stat.S_IFCHR | 0o666, os.makedev(1, minor))
+        device.chmod(0o666)
+    for name in ('pts', 'shm'):
+        Path('/dev', name).mkdir(exist_ok=True)
+    # mmdebstrap removes cached lists during cleanup. Refresh only the target.
+    update.refresh_apt()
+    update.validate_apt_release(plan['target'][1])
+    if not shutil.which('mount'):
+        update.run(['apt-get', '-y', '--no-install-recommends', 'install', 'mount'])
+    update.run(['mount', '-t', 'devpts', '-o', 'newinstance,ptmxmode=0666,mode=0620', 'devpts', '/dev/pts'])
+    update.run(['mount', '-t', 'tmpfs', '-o', 'mode=1777,nosuid,nodev', 'tmpfs', '/dev/shm'])
+    for name, target in (('ptmx', 'pts/ptmx'), ('fd', '/proc/self/fd'),
+                         ('stdin', 'fd/0'), ('stdout', 'fd/1'), ('stderr', 'fd/2')):
+        path = Path('/dev', name)
+        path.unlink(missing_ok=True); path.symlink_to(target)
+    work = Path('/work'); work.mkdir(); os.chown(work, 65534, 65534)
+    home = work / 'home'; home.mkdir(); os.chown(home, 65534, 65534)
+    env, demote = update.safe_environment(home), update.as_user(65534, 65534)
+    source = work / 'simplewm'
+    sha = update.fetch_source(source, env, demote, update.OFFICIAL_WM)
+    if sha != plan['wm_sha']:
+        raise RuntimeError('SimpleWM upstream changed during preflight; retry with a consistent Git revision')
+    packages, modules = update.discover_wm_dependencies(source)
+    # These are target APT commands: resolve and install using target signed
+    # indexes, including SimpleSuite's dependencies before allowing host APT.
+    update.run(['apt-get', '-y', '--no-install-recommends', 'install', *packages, *plan['suite_packages']])
+    modules = update.wm_pkg_config(packages, modules)
+    env['SIMPLEUPDATE_WM_PKGS'] = ' '.join(modules)
+    compiler = update.run(['cc', '--version'], capture_output=True, text=True).stdout.splitlines()[0]
+    stage = work / 'wm-stage'; stage.mkdir(); os.chown(stage, 65534, 65534)
+    local = update.build_and_test_wm(source, stage, sha, env, demote, verify=plan['verify'])
+    # Basic compile/config/link checks always run in the existing build routine.
+    # Exercise the actual compositor with a headless backend whenever the source
+    # provides the project's session test; never attempt a real host session.
+    if not plan['verify']:
+        for check in ('config-check.py',):
+            if (source / 'tests' / check).is_file():
+                update.run(['python3', str(source / 'tests' / check)], env=env, preexec_fn=demote)
+        if (source / 'tests/session-check.py').is_file():
+            update.run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')],
+                       env=env, preexec_fn=demote)
+        else:
+            raise RuntimeError('SimpleWM source lacks its headless session check; target runtime cannot be verified')
+    def specs(names):
+        text = update.run(['dpkg-query', '-W', '-f=${Package}=${Version}\n', *names],
+                          capture_output=True, text=True).stdout
+        return text.splitlines()
+    proof = {'target': plan['target'], 'wm_sha': sha, 'wm_packages': specs(packages),
+             'suite_packages': specs(plan['suite_packages']), 'pkg_config': modules,
+             'compiler': compiler, 'digest': update.payload_digest(local)}
+    (control / 'result.json').write_text(json.dumps(proof))
+
+if __name__ == '__main__':
+    main()

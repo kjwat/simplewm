@@ -73,6 +73,84 @@ SimpleWM from `https://github.com/kjwat/simplewm.git`. No new package manager or
 automatic background updater is involved. Ordinary `apt update` and
 `apt full-upgrade` remain available for Debian and Liquorix.
 
+Before ordinary APT updates, SimpleUpdate checks Debian sources in both
+`sources.list`/`*.list` and deb822 `*.sources` files. It replaces rolling
+`stable`/`oldstable` names with the installed Debian codename, preserving the
+original file as `*.simpleupdate-backup`, and refuses mismatched releases.
+These checks also apply before component-only updates install build dependencies.
+Before installing packages, it also checks the release information in APT's
+actual package indexes, including indexes supplied by unfamiliar mirrors.
+APT can accept a fixed release's status changing to `oldstable`, while codename
+changes continue to require approval.
+Debian mirrors outside `debian.org` should explicitly use the Debian archive
+`Signed-By` keyring. SimpleOS's diverted Debian `os-release` identifies the
+underlying release separately from the SimpleOS version.
+
+SimpleUpdate checks Debian's HTTPS stable-release metadata during ordinary
+updates. A newer major release prompts for explicit approval; pressing Enter
+continues ordinary updates. Failed release detection reports the problem and
+leaves current-release updates available. Noninteractive runs only report a
+new release. Package installation still requires normal signed APT metadata.
+
+For an approved major upgrade, read the linked
+[Debian release notes](https://www.debian.org/releases/stable/release-notes/),
+log out of every SimpleWM session, switch to a text console with Ctrl+Alt+F2,
+log in, and run `simpleupdate --release-upgrade`. Type the new codename to
+start preflight. Plain `simpleupdate` offers this same process when a new stable
+release is available. SimpleUpdate supports the next stable major release only;
+it refuses to skip Debian releases. It checks package state and both Git
+repositories, then creates a temporary userspace for that target release with
+mmdebstrap. If mmdebstrap is absent, its package is downloaded and checked against
+current signed APT metadata, then extracted into the work directory without
+installing host packages or refreshing host caches.
+
+Inside the target userspace, SimpleUpdate retrieves the selected SimpleWM Git
+revision, resolves its development dependencies using target APT, selects the
+newest installable wlroots development ABI, and determines its actual pkg-config
+module. The target compiler builds against target headers and libraries. Default
+configuration, linkage, configuration tests and the headless compositor session
+test must pass. Compiler errors abort before installed-release APT changes. There
+is no attempt to edit C source or fall back to an older wlroots ABI. Compatible
+future Git source and its `build-dependencies.json` are used automatically.
+SimpleSuite's build dependencies are also resolved in that userspace.
+
+Only after that succeeds does SimpleUpdate request final confirmation to change
+the installed Debian system. Declining leaves installed packages and configuration
+unchanged. It backs up `/etc`, the invoking user's `.config`/shell settings,
+package state and installed source/configuration records under `/var/backups/simpleupdate`,
+saves the verified SimpleWM payload and dependency versions durably, and finishes
+current-release updates. It then switches Debian repositories to the
+new codename, disables third-party sources (including Liquorix), backports and
+proposed updates, and runs Debian's documented minimal upgrade followed by a
+full upgrade. APT's package-removal and configuration prompts remain interactive.
+SimpleSuite rebuilds through the existing installation routines. The previously
+compiled SimpleWM payload is checked against the upgraded system's libraries and
+configuration before transactional installation, even when its Git revision is
+unchanged. Reboot before starting SimpleWM, and restore only third-party
+repositories that support the new release.
+Backups preserve configuration symlinks and separately save their target contents
+in `linked-configuration.tar.gz`, including settings stored outside `.config`.
+
+Major upgrades can require source changes and rebuilding can fail. Configuration
+backups and source-install transactions do **not** roll back Debian. Review the
+APT transcript and release notes after an interrupted upgrade; after resolving
+APT problems, retry source builds from a text console with
+`simpleupdate --rebuild`. A small record in `/var/lib/simpleupdate` remembers an
+unfinished release upgrade across restarts. Ordinary and component-only updates
+remain blocked until APT is healthy on the approved release and both source
+rebuilds/installations succeed; skipped or failed components do not clear that
+record. The saved SimpleWM payload is checked for corruption and reused during
+recovery. Ext4 is supported. No snapshots, partition changes, filesystem conversion,
+or bootloader management are required or performed. Interrupted Debian package
+upgrades can require manual APT recovery from a console or Debian rescue media.
+
+`simpleupdate --dry-run` previews ordinary operations without sudo, commands or
+system writes. `simpleupdate --release-upgrade --dry-run` previews the major
+upgrade when a newer stable release exists; it never asks for approval or
+executes the plan. HTTPS release detection still needs network access.
+`--check` retains the existing update-checking interface and may refresh APT
+caches and fetch temporary Git sources; it never approves a release upgrade.
+
 Git uses verified HTTPS, refuses redirects and file/exec transports, checks
 objects, and ignores user Git settings, hooks, and credential helpers. There is
 no claim of independent signature verification: trust is in these official
@@ -81,7 +159,7 @@ a private temporary home. An unchanged installed revision skips rebuilding.
 Normal updates build changed revisions and install them without running developer
 tests. `--verify` explicitly adds the full release suites. SimpleWM configuration
 and runtime-library checks always run before installation. Each
-component has a recoverable transaction; a failed build never reaches the
+component has a recoverable source-install transaction; a failed build never reaches the
 installation, and partial installation restores that component's old files.
 Successful earlier components remain updated if a later component fails.
 
