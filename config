@@ -4,6 +4,7 @@
 set $mod Super
 set $terminal simpleterm
 set $browser firefox-esr
+set $wordprocessor lowriter
 
 layout columns
 border 1
@@ -39,6 +40,7 @@ output * scale=1 position=auto mode=preferred transform=normal adaptive_sync=no 
 
 bindsym $mod+Return exec $terminal
 bindsym $mod+space exec $browser
+bindsym $mod+a exec $wordprocessor
 bindsym $mod+z close
 bindsym Ctrl+Up maximize
 bindsym Ctrl+Down restore
