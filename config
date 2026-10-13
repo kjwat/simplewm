@@ -94,7 +94,7 @@ bindsym $mod+Shift+r reload
 bindsym $mod+Shift+c exec simpleterm -e nano ~/.config/simplewm/config
 bindsym $mod+l exec simplewm-lock
 bindsym $mod+n exec simpleterm -e simplenet
-bindsym $mod+v exec simpleterm -e simplevol
+bindsym $mod+q exec simpleterm -e simplevol
 bindsym $mod+b exec simpleterm -e simpleblue
 bindsym $mod+e exec simpleterm -e simplefiles
 bindsym $mod+x exec simpleterm -e simplewords
