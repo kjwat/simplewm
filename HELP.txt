@@ -4,7 +4,7 @@ Super means the Windows key. No bar; Super+S brings up applications.
 
 Super+Enter         Simpleterm
 Super+Space         Firefox
-Ctrl+A              LibreOffice Writer (global; replaces Select All)
+Super+A             LibreOffice Writer
 Super+Z             Close window (the application can ask about unsaved work)
 Ctrl+Up / Down      Maximize / restore   (Super+Up / Down also work)
 Super+F             Fullscreen
@@ -27,7 +27,7 @@ Super+, / .         Previous / next monitor (Shift moves the window)
 Super+S             Application launcher
 Super+E / X         SimpleFiles / SimpleWords
 Super+W             Terminal wallpaper wizard (preserves fonts)
-Super+N / V / B     Network / sound / Bluetooth
+Super+N / Q / B     Network / sound / Bluetooth
 Super+L             Lock screen
 Super+Shift+Q       Lock, sleep, logout, restart, or shutdown menu
 Print               Select a region; copy it and save in Pictures/Screenshots

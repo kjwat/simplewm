@@ -49,7 +49,7 @@ Fonts, hinting, themes, colors, gaps, layouts, keyboard repeat/layout/options,
 cursor, wallpaper, input, display resolution/refresh/scale/rotation/position,
 workspaces, application rules, and startup commands are configurable. Workspaces
 stop at 1 and 9; Super+1 always reaches the first workspace. Super+S opens the
-launcher. Ctrl+A launches LibreOffice Writer globally, replacing Select All.
+launcher. Super+A launches LibreOffice Writer; Super+Q opens SimpleVol.
 
 `simplewm --check-config -c path` validates before starting. Super+Shift+R,
 `simplewmctl reload`, or SIGHUP applies changes without restarting applications.
