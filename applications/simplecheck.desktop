@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Git Changes — simplecheck
+Exec=simpleterm -e simplecheck
+TryExec=simplecheck
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplecheck;Git Changes;

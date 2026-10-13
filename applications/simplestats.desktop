@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor — simplestats
+Exec=simpleterm -e simplestats
+TryExec=simplestats
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplestats;System Monitor;

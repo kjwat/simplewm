@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleWM Help
+Exec=simplewm-help
+TryExec=simplewm-help
+Icon=help-browser
+Terminal=false
+Categories=Utility;
+Keywords=help;shortcuts;keyboard;

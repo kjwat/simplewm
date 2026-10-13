@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Podcasts — simplepod
+Exec=simpleterm -e simplepod
+TryExec=simplepod
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplepod;Podcasts;

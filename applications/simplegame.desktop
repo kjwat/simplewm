@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Game — simplegame
+Exec=simpleterm -e simplegame
+TryExec=simplegame
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplegame;Game;

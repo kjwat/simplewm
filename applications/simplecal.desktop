@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Calendar — simplecal
+Exec=simpleterm -e simplecal
+TryExec=simplecal
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplecal;Calendar;

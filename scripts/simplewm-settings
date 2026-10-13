@@ -1,0 +1,2 @@
+#!/bin/sh
+exec simpleterm -e nano "${XDG_CONFIG_HOME:-$HOME/.config}/simplewm/config"

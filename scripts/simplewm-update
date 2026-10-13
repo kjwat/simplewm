@@ -1,0 +1,14 @@
+#!/usr/bin/python3
+"""Keep the update result visible when launched from the app menu."""
+import os
+import subprocess
+import sys
+if '--terminal' not in sys.argv:
+    os.execvp('simpleterm', ['simpleterm', '-e', '/usr/local/bin/simplewm-update', '--terminal'])
+result = subprocess.run(['simpleupdate'])
+print('\nUpdate finished.' if result.returncode == 0 else '\nUpdate stopped. Review the message above.')
+try:
+    input('Press Enter to close. ')
+except (EOFError, KeyboardInterrupt):
+    pass
+sys.exit(result.returncode)

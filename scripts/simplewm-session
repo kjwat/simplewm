@@ -10,11 +10,15 @@ if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
 config_root=${XDG_CONFIG_HOME:-$HOME/.config}
+simplewm-setup || printf "%s\n" "SimpleWM: source setup failed; using existing settings." >&2
 mkdir -p "$config_root/simplewm"
 if [ ! -e "$config_root/simplewm/config" ]; then
     cp /usr/local/share/simplewm/config "$config_root/simplewm/config"
 fi
 xdg-user-dirs-update 2>/dev/null || true
+if [ ! -f "$config_root/simplewm/palette.conf" ]; then
+    wallpaper-theme --wallpaper-only --mode fill /usr/local/share/backgrounds/simpleos/simpleos-background.png >/dev/null 2>&1 || true
+fi
 if [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then
     export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 elif [ "${1:-}" != --dbus-ready ]; then

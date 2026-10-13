@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Music — simpleflac
+Exec=simpleterm -e simpleflac
+TryExec=simpleflac
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpleflac;Music;

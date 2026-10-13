@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Network Shares — simpleserve
+Exec=simpleterm -e simpleserve connect
+TryExec=simpleserve
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpleserve;Network Shares;

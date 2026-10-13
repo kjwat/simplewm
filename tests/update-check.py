@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory() as temp:
     with patch.object(update, 'run', side_effect=[None, RuntimeError('test failed')]), \
          patch.object(update, 'install_transaction') as install:
         try:
-            update.build_and_test(root, root, '0'*40, {}, None)
+            update.build_and_test(root, root, '0'*40, {}, None, verify=True)
             raise AssertionError('test failure did not stop staging')
         except RuntimeError:
             pass
@@ -88,7 +88,7 @@ with tempfile.TemporaryDirectory() as temp:
     with patch.object(update, 'run', side_effect=[None, RuntimeError('config test failed')]), \
          patch.object(update, 'install_transaction') as install:
         try:
-            update.build_and_test_wm(root, root, '0'*40, {}, None)
+            update.build_and_test_wm(root, root, '0'*40, {}, None, verify=True)
             raise AssertionError('SimpleWM test failure was ignored')
         except RuntimeError:
             pass
@@ -100,3 +100,17 @@ with tempfile.TemporaryDirectory() as temp:
         update.update_wm(opts, root, {}, None, 0, 0, io.StringIO())
         build.assert_not_called()
 print('OK Suite/SimpleWM partial-install rollback, failed build/test containment, user preservation, staged paths, and unpublished-repository handling')
+
+# The ordinary update path must never invoke the slow release gate.
+for verify in (False, True):
+    with tempfile.TemporaryDirectory() as temp:
+        root=Path(temp); source=root/'source'; source.mkdir()
+        stage=root/'stage'; local=stage/'usr/local'
+        (local/'bin').mkdir(parents=True)
+        (local/'share/simplesuite').mkdir(parents=True)
+        (local/'share/simplesuite/install-manifest').write_text('simplesuite_source_sha='+'0'*40+'\n')
+        with patch.object(update, 'run') as runner:
+            update.build_and_test(source, stage, '0'*40, {}, None, verify=verify)
+        commands=[call.args[0] for call in runner.call_args_list]
+        assert any('release-simplewords' in command for command in commands)==verify
+print('OK normal updates skip all developer tests; --verify explicitly enables them')

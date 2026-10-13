@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop Settings
+Exec=simplewm-settings
+TryExec=simplewm-settings
+Icon=preferences-system
+Terminal=false
+Categories=Utility;
+Keywords=settings;config;keyboard;

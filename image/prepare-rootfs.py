@@ -9,7 +9,7 @@ import configparser
 from pathlib import Path
 import shutil
 
-RELEASE = '0.7-simplewm'
+RELEASE = '0.8'
 SOURCE = Path(__file__).resolve().parent.parent
 
 def main():
@@ -63,10 +63,14 @@ def main():
         daemon_link.unlink()
     shutil.copytree(args.payload / 'usr/local', root / 'usr/local', dirs_exist_ok=True, symlinks=True)
     # A clean source snapshot replaces the old snapshot; no stale files survive.
+    remove('usr/local/share/simplesuite/source')
     shutil.copytree(args.suite_source, root / 'usr/local/share/simplesuite/source',
                     ignore=shutil.ignore_patterns('.git', 'build', '__pycache__'), symlinks=True)
     write('usr/local/share/simplesuite/install-source', '/usr/local/share/simplesuite/source\n')
-    copy(root / 'usr/local/bin/simpleserved', 'usr/local/sbin/simpleserved')
+    daemon = root / 'usr/local/bin/simpleserved'
+    canonical = root / 'usr/local/sbin/simpleserved'
+    if not canonical.exists() or not daemon.samefile(canonical):
+        copy(daemon, 'usr/local/sbin/simpleserved')
     # Preserve the suite's public daemon invocation, with one canonical binary.
     remove('usr/local/bin/simpleserved')
     (root / 'usr/local/bin/simpleserved').symlink_to('../sbin/simpleserved')
@@ -84,7 +88,7 @@ export SIMPLEOS_BUNDLED_SIMPLESUITE_SOURCE=/usr/local/share/simplesuite/source
     write('usr/local/share/applications/simplewm-wallpaper.desktop', '''[Desktop Entry]
 Name=Wallpaper and colors
 Comment=Choose a wallpaper and a legible palette
-Exec=simpleterm -e wallpaper-theme --wizard
+Exec=wallpaper-theme --gui
 Icon=preferences-desktop-wallpaper
 Type=Application
 Terminal=false
@@ -118,7 +122,7 @@ Updates: simpleupdate. The live medium keeps XFCE for Calamares.
     write('usr/local/share/simpleos/simplesuite.commit', revision + '\n')
     write('usr/local/share/simpleos/SOURCES.lock', f'''SimpleOS {RELEASE}
 Base: SimpleOS 0.6-r1 ISO (unaltered BIOS/UEFI boot loaders and XFCE Calamares flow)
-SimpleWM: 0.1.0, GPL-3.0, local source /usr/local/share/simplewm/source
+SimpleWM: 0.8.0, GPL-3.0, local source /usr/local/share/simplewm/source
 dwl protocol core: v0.7, 74e45c4014ae7048ecbb76eb6f54034b8b479480
 SimpleSuite official: https://github.com/kjwat/simplesuite.git
 SimpleSuite commit: {revision}
@@ -129,7 +133,7 @@ Custom commands/assets: /usr/local; user preferences/data remain in each home
 Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted without fontbomb
 ''')
     branding = root / 'etc/calamares/branding/simpleos/branding.desc'
-    branding.write_text(branding.read_text().replace('0.6-r1', RELEASE).replace('"#135BFF"', '"#536a5b"'))
+    branding.write_text(branding.read_text().replace('0.6-r1', RELEASE).replace('0.7-simplewm', RELEASE).replace('"#135BFF"', '"#536a5b"'))
     for version in ('gtk-3.0', 'gtk-4.0'):
         settings = root / f'etc/skel/.config/{version}/settings.ini'
         if settings.exists():

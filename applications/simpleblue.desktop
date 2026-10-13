@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetooth — simpleblue
+Exec=simpleterm -e simpleblue
+TryExec=simpleblue
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpleblue;Bluetooth;

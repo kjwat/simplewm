@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Clock — simpleclock
+Exec=simpleterm -e simpleclock
+TryExec=simpleclock
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpleclock;Clock;

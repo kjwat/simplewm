@@ -298,7 +298,7 @@ def terminal_ansi_palette(theme: dict[str, tuple[int, int, int]]) -> list[str]:
 
 def firefox_profile_dirs() -> list[Path]:
     """Return declared Firefox profiles without guessing from cache directories."""
-    roots = [HOME / ".mozilla/firefox", HOME / ".mozilla/firefox-esr"]
+    roots = [HOME / ".mozilla/firefox", HOME / ".mozilla/firefox-esr", CONFIG / "mozilla/firefox", CONFIG / "mozilla/firefox-esr"]
     profiles: list[Path] = []
     for root in roots:
         profiles_ini = root / "profiles.ini"
@@ -453,12 +453,21 @@ def rollback():
     refresh()
     print('Previous wallpaper and colors restored.')
 
-def apply_image(source, mode, wallpaper_only=False):
+def zoom_image(image, zoom):
+    if not math.isfinite(zoom) or not 1 <= zoom <= 5:
+        raise ValueError('Zoom must be between 1 and 5')
+    w, h = image.size
+    crop_w, crop_h = max(1, round(w / zoom)), max(1, round(h / zoom))
+    x, y = (w - crop_w) // 2, (h - crop_h) // 2
+    return image.crop((x, y, x + crop_w, y + crop_h))
+
+
+def apply_image(source, mode, wallpaper_only=False, zoom=1.0):
     source=Path(source).expanduser().resolve(strict=True)
     with Image.open(source) as image:
         if image.width*image.height>42_000_000:
             raise RuntimeError('wallpaper exceeds the 42 megapixel limit')
-        image=ImageOps.exif_transpose(image).convert('RGB')
+        image=zoom_image(ImageOps.exif_transpose(image).convert('RGB'),zoom)
         image.thumbnail((10000,10000),Image.Resampling.LANCZOS)
         clusters=quantize(list(image.resize((96,96)).getdata()))
         theme=choose_colors(clusters)
@@ -490,9 +499,9 @@ def apply_image(source, mode, wallpaper_only=False):
         for name,key in [('background','background'),('inactive','surface2'),('focused','accent'),('urgent','error')]:
             lines.append('color '+name+' '+hexcolor(theme[key]))
     atomic_write(palette,'\n'.join(lines)+'\n')
-    include='include palette.conf'
+    include='include palette*.conf'
     text=config.read_text()
-    if include not in text.splitlines():
+    if include not in text.splitlines() and 'include palette.conf' not in text.splitlines():
         atomic_write(config,text.rstrip()+'\n\n'+include+'\n')
     check=subprocess.run(['simplewm','--check-config','-c',str(config)],capture_output=True,text=True)
     if check.returncode:
@@ -546,22 +555,31 @@ def apply_image(source, mode, wallpaper_only=False):
         write_firefox(theme)
         palette_json=CONFIG / 'simplewm/palette.json'
         backup_once(palette_json); atomic_write(palette_json,json.dumps({k:hexcolor(v) for k,v in theme.items()}))
+    backup_once(STATE / 'selection.json')
+    atomic_write(STATE / 'selection.json', json.dumps({'image': str(source), 'mode': mode, 'zoom': zoom, 'theme': not wallpaper_only}))
     refresh()
     print(f'Wallpaper: {source}\nMode: {mode}\nAccent: {hexcolor(theme["accent"])}')
-    print('SimpleWM, GTK, launcher, Simpleterm, Xwayland, and existing Firefox profiles use the palette.')
+    if not wallpaper_only:
+        print('SimpleWM, GTK, launcher, Simpleterm, Xwayland, and existing Firefox profiles use the palette.')
     print('Reopen Simpleterm and Firefox for their first palette change. Fonts are preserved. Undo: wallpaper-theme --rollback')
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('image',nargs='?')
-    parser.add_argument('--mode',choices=['fit','fill','center','stretch','tile'],default='fit')
+    parser.add_argument('--mode',choices=['fit','fill','center','stretch','tile'],default='fill')
     parser.add_argument('--wallpaper-only',action='store_true')
-    parser.add_argument('--wizard',action='store_true')
+    parser.add_argument('--wizard',action='store_true',help='interactive terminal prompts')
+    parser.add_argument('--gui',action='store_true',help='graphical wallpaper and color settings')
+    parser.add_argument('--zoom',type=float,default=1.0,help='center zoom from 1 to 5')
     parser.add_argument('--rollback',action='store_true')
     parser.add_argument('--startup',action='store_true')
     parser.add_argument('--doctor',action='store_true')
     parser.add_argument('--version',action='version',version='wallpaper-theme SimpleWM 1.0 (palette engine 3.8)')
     args=parser.parse_args()
+    if args.gui or (not args.image and not any((args.wizard,args.rollback,args.startup,args.doctor))):
+        import runpy
+        ui=Path(__file__).resolve().with_name('simplewm-appearance')
+        runpy.run_path(str(ui),run_name='__main__'); return
     if args.rollback:
         rollback(); return
     if args.startup:
@@ -575,7 +593,7 @@ def main():
         args.mode=input(f'Mode: fit / fill / center / stretch / tile [{args.mode}]: ').strip() or args.mode
         if args.mode not in ('fit','fill','center','stretch','tile'): raise RuntimeError('invalid display mode')
     if not args.image: return
-    apply_image(args.image,args.mode,args.wallpaper_only)
+    apply_image(args.image,args.mode,args.wallpaper_only,args.zoom)
 
 if __name__=='__main__':
     try:

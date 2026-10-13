@@ -1,9 +1,10 @@
 SimpleWM — your writing desk
 
-Super means the Windows key. No bar; Super+D brings up applications.
+Super means the Windows key. No bar; Super+S brings up applications.
 
 Super+Enter         Simpleterm
 Super+Space         Firefox
+Ctrl+A              LibreOffice Writer (global; replaces Select All)
 Super+Z             Close window (the application can ask about unsaved work)
 Ctrl+Up / Down      Maximize / restore   (Super+Up / Down also work)
 Super+F             Fullscreen
@@ -13,28 +14,29 @@ Super+Left / Right  Focus a neighbor
 Super+Shift+arrows  Swap neighbors
 Super+1 … 9         Workspace 1 … 9
 Super+Shift+1 … 9   Move window to workspace
-Super+PageUp/Down   Previous / next workspace
+Super+PageUp/Down   Previous / next workspace (stops at 1 and 9)
 Super+Escape        Return to the last workspace
-Super+C / S / M     Balanced columns / writing + reference stack / paper layout
+Super+C / M         Balanced columns / paper layout
+Super+Shift+S       Writing + reference stack layout
 Super+Shift+Space   Free placement layout
 Super+- / =         Narrow / widen the writing column in stack layout
 Super+mouse left    Drag a window into free placement
 Super+mouse right   Resize a window
 Super+, / .         Previous / next monitor (Shift moves the window)
 
-Super+D             Application launcher
+Super+S             Application launcher
 Super+E / X         SimpleFiles / SimpleWords
 Super+W             Wallpaper and matching palette (preserves fonts)
 Super+N / V / B     Network / sound / Bluetooth
 Super+L             Lock screen
 Super+Shift+Q       Lock, sleep, logout, restart, or shutdown menu
-Print               Screenshot to Pictures/Screenshots and clipboard
-Shift+Print         Select screenshot region
+Print               Select a region; copy it and save in Pictures/Screenshots
+Shift+Print         Capture the whole screen
 Super+Shift+C       Edit ~/.config/simplewm/config in nano
 Super+Shift+R       Reload settings (invalid changes keep the working config)
 Super+F1            This guide
 
-Settings: ~/.config/simplewm/config. Check: simplewm --check-config.
+Settings: ~/simplewm/config; ~/.config/simplewm points to the same directory. Check: simplewm --check-config.
 Logs: ~/.local/state/simplewm/session.log. Updates: simpleupdate.
 Ctrl+Alt+F2 opens a rescue text console. Log in and use simplewm-session
 to start a desktop from a text login. SIMPLEWM_NO_AUTOSTART=1 disables

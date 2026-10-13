@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Writing — simplewords
+Exec=simpleterm -e simplewords
+TryExec=simplewords
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplewords;Writing;

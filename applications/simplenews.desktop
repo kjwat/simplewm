@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=News — simplenews
+Exec=simpleterm -e simplenews
+TryExec=simplenews
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplenews;News;

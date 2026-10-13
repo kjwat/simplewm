@@ -68,6 +68,9 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_xdg_foreign_registry.h>
+#include <wlr/types/wlr_xdg_foreign_v1.h>
+#include <wlr/types/wlr_xdg_foreign_v2.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <xkbcommon/xkbcommon.h>
@@ -135,6 +138,7 @@ typedef struct {
 	struct wl_listener unmap;
 	struct wl_listener destroy;
 	struct wl_listener set_title;
+	struct wl_listener set_parent;
 	struct wl_listener fullscreen;
 	struct wl_listener set_decoration_mode;
 	struct wl_listener destroy_decoration;
@@ -286,6 +290,7 @@ static void createlayersurface(struct wl_listener *listener, void *data);
 static void createlocksurface(struct wl_listener *listener, void *data);
 static void createmon(struct wl_listener *listener, void *data);
 static void createnotify(struct wl_listener *listener, void *data);
+static void parentnotify(struct wl_listener *listener, void *data);
 static void createpointer(struct wlr_pointer *pointer);
 static void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createpopup(struct wl_listener *listener, void *data);
@@ -1074,6 +1079,16 @@ createmon(struct wl_listener *listener, void *data)
 }
 
 void
+parentnotify(struct wl_listener *listener, void *data)
+{
+ Client *c = wl_container_of(listener, c, set_parent);
+ Client *parent = client_get_parent(c);
+ if (!client_surface(c)->mapped || !parent || !parent->mon) return;
+ setfloating(c, 1);
+ setmon(c, parent->mon, parent->tags);
+}
+
+void
 createnotify(struct wl_listener *listener, void *data)
 {
 	/* This event is raised when a client creates a new toplevel (application window). */
@@ -1092,6 +1107,7 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&toplevel->events.request_fullscreen, &c->fullscreen, fullscreennotify);
 	LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
 	LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
+	LISTEN(&toplevel->events.set_parent, &c->set_parent, parentnotify);
 }
 
 void
@@ -1261,6 +1277,7 @@ destroynotify(struct wl_listener *listener, void *data)
 	} else
 #endif
 	{
+		wl_list_remove(&c->set_parent.link);
 		wl_list_remove(&c->commit.link);
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
@@ -2456,6 +2473,9 @@ setup(void)
 	wl_list_init(&clients);
 	wl_list_init(&fstack);
 
+	struct wlr_xdg_foreign_registry *foreign = wlr_xdg_foreign_registry_create(dpy);
+	wlr_xdg_foreign_v1_create(dpy, foreign);
+	wlr_xdg_foreign_v2_create(dpy, foreign);
 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
 	LISTEN_STATIC(&xdg_shell->events.new_toplevel, createnotify);
 	LISTEN_STATIC(&xdg_shell->events.new_popup, createpopup);

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sound — simplevol
+Exec=simpleterm -e simplevol
+TryExec=simplevol
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplevol;Sound;

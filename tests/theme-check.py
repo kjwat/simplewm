@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='simplewm-theme-') as temp:
     (cfg / 'gtk-3.0').mkdir()
     gtk=cfg / 'gtk-3.0/gtk.css'
     gtk.write_text('/* personal CSS */\n')
-    firefox=home / '.mozilla/firefox/writer.default'
+    firefox=cfg / 'mozilla/firefox/writer.default'
     firefox.mkdir(parents=True)
     (firefox.parent / 'profiles.ini').write_text('[Profile0]\nPath=writer.default\nIsRelative=1\n')
     (firefox / 'user.js').write_text('user_pref("browser.startup.page", 3);\n')
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='simplewm-theme-') as temp:
     term=configparser.ConfigParser()
     term.read(terminal)
     assert dict(term['Text'])=={'font':'My beloved font 17','custom-font':'true','cell-height':'1.2'}
-    assert 'include palette.conf' in config.read_text()
+    assert 'include palette*.conf' in config.read_text()
     assert 'A writer’s desk' in (cfg / 'simplewm/palette.conf').read_text()
     assert 'personal CSS' in gtk.read_text()
     assert 'browser.startup.page' in (firefox / 'user.js').read_text()

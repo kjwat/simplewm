@@ -13,7 +13,9 @@ for agent in /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \
     if [ -x "$agent" ]; then "$agent" >/dev/null 2>&1 & break; fi
 done
 # Idle inhibition (e.g. Firefox playing video) is honored by the compositor.
-# No bar, status poller, notification daemon, or background updater.
+# Short notifications provide screenshot, workspace, and update feedback.
+# The image already supplies XFCE's notification service through D-Bus.
+# Reuse that service rather than competing for org.freedesktop.Notifications.
 exec swayidle -w timeout 900 'simplewm-lock' \
     timeout 1200 'wlopm --off "*"' \
     resume 'wlopm --on "*"' before-sleep 'simplewm-lock'

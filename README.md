@@ -35,7 +35,10 @@ manager that searches `/usr/local/share/wayland-sessions`.
 
 ## Configuration
 
-Copy `config` to `~/.config/simplewm/config`, or use `simplewm -c path`.
+Edit `~/simplewm/config`, or press Super+Shift+C. On SimpleOS,
+`~/.config/simplewm` links to `~/simplewm`: both paths refer to the same settings.
+`simplewm-setup` creates the source checkout from the bundled Git history without
+requiring a network connection and preserves existing settings during migration.
 The distributed config is a commented reference for every directive. Strings
 with spaces use quotes; `set $name value` defines variables. `include path`
 accepts globs relative to the including file, with at most eight nesting levels.
@@ -44,7 +47,9 @@ Later bindings replace earlier bindings for the same chord; rules match globbed
 input rules are applied in file order, from broad rules to specific devices.
 Fonts, hinting, themes, colors, gaps, layouts, keyboard repeat/layout/options,
 cursor, wallpaper, input, display resolution/refresh/scale/rotation/position,
-workspaces, application rules, and startup commands are configurable.
+workspaces, application rules, and startup commands are configurable. Workspaces
+stop at 1 and 9; Super+1 always reaches the first workspace. Super+S opens the
+launcher. Ctrl+A launches LibreOffice Writer globally, replacing Select All.
 
 `simplewm --check-config -c path` validates before starting. Super+Shift+R,
 `simplewmctl reload`, or SIGHUP applies changes without restarting applications.
@@ -73,9 +78,9 @@ objects, and ignores user Git settings, hooks, and credential helpers. There is
 no claim of independent signature verification: trust is in these official
 GitHub repositories and HTTPS. Builds and tests run without root privileges in
 a private temporary home. An unchanged installed revision skips rebuilding.
-SimpleSuite must pass its upstream full release gate and Simpleterm checks;
-SimpleWM must pass config, updater, palette, and real Wayland/Xwayland session
-checks. Only the tested `/usr/local` payload is staged and installed. Each
+Normal updates build changed revisions and install them without running developer
+tests. `--verify` explicitly adds the full release suites. SimpleWM configuration
+and runtime-library checks always run before installation. Each
 component has a recoverable transaction; a failed build never reaches the
 installation, and partial installation restores that component's old files.
 Successful earlier components remain updated if a later component fails.
@@ -88,6 +93,7 @@ only when a build is needed. Source snapshots and revision manifests live in
 
 ```sh
 simpleupdate --check                 # refresh/check, without installing
+simpleupdate --verify                # update with full developer tests (slow)
 simpleupdate --os-only               # Debian and Liquorix
 simpleupdate --suite-only            # SimpleSuite
 simpleupdate --wm-only               # SimpleWM
@@ -104,8 +110,10 @@ unless you arrange your own signing.
 
 ## Wallpaper and palette
 
-Super+W opens `wallpaper-theme --wizard` in Simpleterm. You can also run
-`wallpaper-theme /path/to/picture` or `wallpaper-theme --mode fit /path/to/picture`.
+Super+W opens the graphical wallpaper chooser, with preview, Fill/Fit controls,
+a zoom slider, and a checkbox for matching application colors. Clean installs use Fill. You can also run
+`wallpaper-theme /path/to/picture` or `wallpaper-theme --mode fill --zoom 1.5 /path/to/picture`.
+`--wizard` remains available for terminal prompts.
 The tool retains the palette extraction and contrast rules from your original
 `wallpaper-theme-dwm.sh`, applying the result to SimpleWM borders/background,
 GTK, Fuzzel, Simpleterm's ANSI colors, Xresources, and existing Firefox profiles.

@@ -3,7 +3,7 @@ PKG_CONFIG ?= pkg-config
 PREFIX ?= /usr/local
 BUILD = build
 PKGS = wlroots-0.18 wayland-server xkbcommon libinput xcb xcb-icccm
-CPPFLAGS += -I. -I$(BUILD) -DWLR_USE_UNSTABLE -DXWAYLAND -D_POSIX_C_SOURCE=200809L -DVERSION=\"0.1.0\"
+CPPFLAGS += -I. -I$(BUILD) -DWLR_USE_UNSTABLE -DXWAYLAND -D_POSIX_C_SOURCE=200809L -DVERSION=\"0.8.0\"
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit-function-declaration -Werror=incompatible-pointer-types
 LDLIBS = $(shell $(PKG_CONFIG) --libs $(PKGS)) -lm
@@ -12,7 +12,7 @@ HEADERS = $(addprefix $(BUILD)/,cursor-shape-v1-protocol.h pointer-constraints-u
 all: $(BUILD)/simplewm
 $(BUILD):
 	mkdir -p $@
-$(BUILD)/simplewm: simplewm.c config.h config.c desktop.c client.h util.c util.h $(HEADERS)
+$(BUILD)/simplewm: Makefile simplewm.c config.h config.c desktop.c client.h util.c util.h $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(shell $(PKG_CONFIG) --cflags $(PKGS)) simplewm.c util.c $(LDFLAGS) $(LDLIBS) -o $@
 $(BUILD)/cursor-shape-v1-protocol.h: | $(BUILD)
 	wayland-scanner enum-header $(PROTO_DIR)/staging/cursor-shape/cursor-shape-v1.xml $@
@@ -34,6 +34,9 @@ install: all
 	for f in scripts/simplewm-* scripts/simplewmctl scripts/simpleupdate; do install -m755 $$f $(DESTDIR)$(PREFIX)/bin/; done
 	install -m755 scripts/wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/
 	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme
+	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme.sh
+	install -d $(DESTDIR)$(PREFIX)/share/applications
+	install -m644 applications/*.desktop $(DESTDIR)$(PREFIX)/share/applications/
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/simplewm $(DESTDIR)$(PREFIX)/bin/simplewmctl $(DESTDIR)$(PREFIX)/bin/simpleupdate $(addprefix $(DESTDIR)$(PREFIX)/bin/,$(notdir $(wildcard scripts/simplewm-*)))
 	rm -rf $(DESTDIR)$(PREFIX)/share/simplewm $(DESTDIR)$(PREFIX)/share/doc/simplewm

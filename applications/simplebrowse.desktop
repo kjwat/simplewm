@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Web Browser — simplebrowse
+Exec=simpleterm -e simplebrowse
+TryExec=simplebrowse
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplebrowse;Web Browser;

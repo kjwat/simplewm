@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Write USB Image — simpleburn
+Exec=simpleterm -e simpleburn
+TryExec=simpleburn
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpleburn;Write USB Image;

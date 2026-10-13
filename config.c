@@ -184,6 +184,7 @@ static int cfg_line(ConfigReader *r, char *line, const char *file, int lineno)
   glob_t matches={0}; int result;
   if (n!=2 || !cfg_path(words[1],file,path,sizeof(path))) { FAIL("expected: include path"); }
   result=glob(path,0,NULL,&matches);
+  if (result==GLOB_NOMATCH && strpbrk(path,"*?[")) { globfree(&matches); return 1; }
   if (result) { globfree(&matches); FAIL("include matched no readable files"); }
   for (size_t i=0;i<matches.gl_pathc;i++) if (!cfg_read(r,matches.gl_pathv[i])) { globfree(&matches); return 0; }
   globfree(&matches);

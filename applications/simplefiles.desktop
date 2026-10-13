@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Files — simplefiles
+Exec=simpleterm -e simplefiles
+TryExec=simplefiles
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplefiles;Files;

@@ -99,8 +99,8 @@ label live-basic
 ''')
     menu = media / 'isolinux/menu.cfg'
     menu.write_text(re.sub(r'menu title SimpleOS .* - the writing system',
-                          'menu title SimpleOS 0.7 - SimpleWM writing desk', menu.read_text()))
-    (media / '.disk/info').write_text('SimpleOS 0.7 SimpleWM - amd64 live/install image, Liquorix default\n')
+                          'menu title SimpleOS 0.8 - SimpleWM writing desk', menu.read_text()))
+    (media / '.disk/info').write_text('SimpleOS 0.8 SimpleWM - amd64 live/install image, Liquorix default\n')
     (media / '.disk/mkisofs').write_text('SimpleOS: original hybrid BIOS/UEFI boot layout replayed with xorriso; see SimpleWM image/repack.py\n')
     # Restore metadata lost by rootless extraction, retaining only existing paths.
     pseudo = media.parent / 'simplewm-ownership.pseudo'
@@ -116,7 +116,8 @@ label live-basic
         total = sum(p.stat().st_size for p in root.rglob('*') if p.is_file() and not p.is_symlink())
         (live / 'filesystem.size').write_text(str(total) + '\n')
         run('mksquashfs', root, live / 'filesystem.squashfs', '-noappend', '-comp', 'xz', '-b', '1048576',
-            '-all-root', '-pseudo-override', '-pf', pseudo, '-processors', min(8, os.cpu_count() or 1),
+            *([] if os.geteuid() == 0 else ['-all-root', '-pseudo-override', '-pf', pseudo]),
+            '-processors', min(8, os.cpu_count() or 1),
             '-mem', '4G', '-no-progress')
     result = run('unsquashfs', '-ll', live / 'filesystem.squashfs', 'usr/bin/sudo', 'usr/bin/pkexec',
                  capture_output=True, text=True).stdout
@@ -140,7 +141,7 @@ label live-basic
     if temporary.exists():
         temporary.unlink()
     command = ['xorriso', '-indev', str(base), '-outdev', str(temporary), '-boot_image', 'any', 'replay',
-               '-volid', 'SIMPLEOS_0_7_SIMPLEWM']
+               '-volid', 'SIMPLEOS_0_8']
     # Remove obsolete versioned kernels from the base, including on repeat builds.
     if obsolete:
         command.extend(['-rm', *obsolete, '--'])

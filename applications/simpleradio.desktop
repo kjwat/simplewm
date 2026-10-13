@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Radio — simpleradio
+Exec=simpleterm -e simpleradio
+TryExec=simpleradio
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpleradio;Radio;

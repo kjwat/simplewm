@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Network — simplenet
+Exec=simpleterm -e simplenet
+TryExec=simplenet
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplenet;Network;

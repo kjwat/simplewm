@@ -1,3 +1,19 @@
+# SimpleOS 0.8 verification
+
+Source verification on 2026-10-12:
+
+- C build with warnings as errors; config, theme and transaction checks.
+- Offline setup from bundled Git history; personal edits and backups preserved;
+  source/config paths share the same files and repeat setup is idempotent.
+- Real headless Wayland/Xwayland desktop checks, including bounded workspaces
+  and GTK xdg-foreign dialogs in separate processes.
+- Graphical wallpaper preview and Apply, Fill default and application colors.
+- Ordinary updates skip developer tests; --verify opts into them.
+
+The 0.8 VM boot/installation walkthrough was waived by the user to conserve
+compute. Image structure and checksums are checked; release results are recorded
+beside the final image in RELEASE-NOTES.txt and BUILD-REPORT.md. The older 0.7 findings follow for provenance.
+
 # Validation status
 
 Source checks completed on 2026-10-12 in an isolated Debian 13 build root:

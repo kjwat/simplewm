@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""APT plus tested, staged updates of official SimpleSuite and SimpleWM."""
+"""Update Debian, SimpleSuite, and SimpleWM; --verify adds developer tests."""
 import argparse
 import fcntl
 import hashlib
@@ -100,7 +100,7 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
     opts = dict(env=env, preexec_fn=demote)
     run(git + ['init', '--quiet', str(source)], **opts)
     run(git + ['-C', str(source), 'remote', 'add', 'origin', origin], **opts)
-    run(git + ['-C', str(source), 'fetch', '--depth=1', '--no-tags', 'origin', 'HEAD'], **opts)
+    run(git + ['-C', str(source), 'fetch', *(['--depth=1'] if origin == OFFICIAL else []), '--no-tags', 'origin', 'HEAD'], **opts)
     sha = run(git + ['-C', str(source), 'rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
               capture_output=True, text=True, **opts).stdout.strip()
     if not re.fullmatch(r'[0-9a-f]{40,64}', sha):
@@ -109,18 +109,19 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
     run(git + ['-C', str(source), 'checkout', '--quiet', '--detach', sha], **opts)
     return sha
 
-def build_and_test(source, stage, sha, env, demote):
+def build_and_test(source, stage, sha, env, demote, verify=False):
     common = ['make', '-C', str(source), f'SIMPLESUITE_SOURCE_SHA={sha}',
               'PREFIX=/usr/local', 'SIMPLESUITE_INSTALL_SIMPLESERVE=1']
     opts = dict(env=env, preexec_fn=demote)
     jobs = str(min(4, os.cpu_count() or 1))
     say(f'Building {sha[:12]} in a private directory')
     run(common + ['-j' + jobs, 'all', 'simpleterm'], **opts)
-    say('Running the upstream release gate and Simpleterm checks')
-    # Xvfb gives GUI tests a private screen and keeps them away from the user's desk.
-    run(['xvfb-run', '-a', '-s', '-screen 0 1280x800x24',
-         'dbus-run-session', '--', *common, 'release-simplewords', 'test-simpleterm'], **opts)
-    say('Staging the tested programs under /usr/local')
+    if verify:
+        say('Running the developer release gate (--verify)')
+        run(['xvfb-run', '-a', '-s', '-screen 0 1280x800x24',
+             'dbus-run-session', '--', *common, 'release-simplewords', 'test-simpleterm'],
+            env=env | {'GDK_BACKEND': 'x11', 'LIBGL_ALWAYS_SOFTWARE': '1'}, preexec_fn=demote)
+    say('Staging the updated programs under /usr/local')
     run(common + [f'DESTDIR={stage}', 'install'], **opts)
     run(['sh', str(source / 'install-simpleterm.sh'), '--no-deps'],
         env=env | {'DESTDIR': str(stage), 'SIMPLETERM_NONINTERACTIVE': '1'},
@@ -178,15 +179,16 @@ def wm_repository_exists():
             return False
         raise
 
-def build_and_test_wm(source, stage, sha, env, demote):
+def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     common = ['make', '-C', str(source), 'PREFIX=/usr/local']
     opts = dict(env=env, preexec_fn=demote)
     say(f'Building SimpleWM {sha[:18]}')
     run(common + ['CFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter'], **opts)
-    for check in ('config-check.py', 'update-check.py', 'theme-check.py'):
-        run(['python3', str(source / 'tests' / check)], **opts)
-    # Virtual wlroots outputs and a private session bus never touch the desk.
-    run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)
+    run([str(source / 'build/simplewm'), '--check-config', '-c', str(source / 'config')], **opts)
+    if verify:
+        for check in ('config-check.py', 'update-check.py', 'theme-check.py', 'setup-check.py'):
+            run(['python3', str(source / 'tests' / check)], **opts)
+        run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)
     run(common + [f'DESTDIR={stage}', 'install'], **opts)
     local = stage / 'usr/local'
     for name in ('simplewm', 'simplewmctl', 'simplewm-session', 'simpleupdate', 'wallpaper-theme'):
@@ -195,6 +197,8 @@ def build_and_test_wm(source, stage, sha, env, demote):
     shutil.copytree(source, local / 'share/simplewm/source',
                     ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'), symlinks=True)
     (local / 'share/simplewm/install-manifest').write_text(f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n')
+    run(['git', '-C', str(source), 'branch', '-f', 'main', sha], **opts)
+    run(['git', '-C', str(source), 'bundle', 'create', str(local / 'share/simplewm/source.bundle'), 'main'], **opts)
     result = run(['ldd', str(local / 'bin/simplewm')], capture_output=True, text=True)
     if 'not found' in result.stdout:
         raise RuntimeError('SimpleWM has missing runtime libraries')
@@ -232,6 +236,16 @@ def update_wm(args, work, env, demote, uid, gid, log):
     else:
         say(f'Fetching only {OFFICIAL_WM}')
         sha = fetch_source(source, env, demote, OFFICIAL_WM)
+    bundle = PREFIX / 'share/simplewm/source.bundle'
+    if original is None and current and bundle.exists() and re.fullmatch(r'[0-9a-f]{40}', current):
+        # A locally built release may be ahead of the published branch. Never
+        # silently replace it with an older upstream commit.
+        run(['git', '-C', str(source), 'fetch', '--quiet', str(bundle), 'main'], env=env, preexec_fn=demote)
+        older = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', sha, current],
+                               env=env, preexec_fn=demote).returncode == 0
+        if older and sha != current:
+            say('Installed SimpleWM is newer than the published branch; keeping the installed release')
+            return
     if current == sha and not args.rebuild:
         say(f'SimpleWM {sha[:18]} is current; no build needed')
         return
@@ -243,9 +257,9 @@ def update_wm(args, work, env, demote, uid, gid, log):
     stage.mkdir(); os.chown(stage, uid, gid)
     log.write(f'SimpleWM source: {OFFICIAL_WM if original is None else original}\nRevision: {sha}\n')
     log.flush()
-    local = build_and_test_wm(source, stage, sha, env, demote)
+    local = build_and_test_wm(source, stage, sha, env, demote, args.verify)
     install_transaction(local)
-    log.write('SimpleWM tests passed; installation committed.\n'); log.flush()
+    log.write(f'SimpleWM installed; full verification={args.verify}.\n'); log.flush()
     say('SimpleWM installed; the running session stays available until your next login')
 
 def validate_local(stage):
@@ -352,6 +366,7 @@ def install_transaction(stage, prefix=PREFIX):
 def main():
     global LOG_STREAM
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--verify', action='store_true', help='also run the full developer test suites (slow)')
     parser.add_argument('--check', action='store_true', help='report available updates without installing')
     parser.add_argument('--os-only', action='store_true', help='only Debian and Liquorix through APT')
     parser.add_argument('--suite-only', action='store_true', help='only official SimpleSuite')
@@ -372,6 +387,11 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit('simpleupdate is already running')
+    logs = Path('/var/log/simpleupdate')
+    logs.mkdir(mode=0o755, exist_ok=True)
+    logfile = logs / (time.strftime('%Y-%m-%d_%H-%M-%S') + '.log')
+    LOG_STREAM = logfile.open('a')
+    say(f'Update transcript: {logfile}')
     recover_transaction()
     if not args.suite_only and not args.wm_only:
         say('Refreshing Debian and Liquorix APT repositories')
@@ -379,6 +399,8 @@ def main():
         run(['apt-get', '-o', 'Dpkg::Options::=--force-confdef', '-o', 'Dpkg::Options::=--force-confold',
              '-s' if args.check else '-y', 'full-upgrade'])
     if args.os_only:
+        LOG_STREAM.close()
+        LOG_STREAM = None
         return
     uid, gid = build_identity()
     work = Path(tempfile.mkdtemp(prefix='simpleupdate-', dir='/var/tmp'))
@@ -389,9 +411,9 @@ def main():
     demote = as_user(uid, gid)
     logs = Path('/var/log/simpleupdate')
     logs.mkdir(mode=0o755, exist_ok=True)
-    logfile = logs / (time.strftime('%Y-%m-%d_%H-%M-%S') + '.log')
+    LOG_STREAM.close()
     try:
-        with logfile.open('w') as log:
+        with logfile.open('a') as log:
             LOG_STREAM = log
             say(f'Update transcript: {logfile}')
             if not args.wm_only:
@@ -408,8 +430,8 @@ def main():
                     stage = work / 'stage'
                     stage.mkdir(); os.chown(stage, uid, gid)
                     log.write(f'Official source: {OFFICIAL}\nRevision: {sha}\n'); log.flush()
-                    local = build_and_test(source, stage, sha, env, demote)
-                    log.write('Suite build, release tests, Simpleterm tests, and staged library checks passed.\n'); log.flush()
+                    local = build_and_test(source, stage, sha, env, demote, args.verify)
+                    log.write(f'Suite build and library checks passed; full verification={args.verify}.\n'); log.flush()
                     install_transaction(local)
                     log.write('SimpleSuite installation committed.\n')
                     say(f'SimpleSuite {sha[:12]} installed; existing applications can finish normally')

@@ -1,0 +1,99 @@
+#!/usr/bin/python3
+"""Prepare one editable SimpleWM directory, including on an offline install."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+def git(path, *args):
+    return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c',
+        'http.lowSpeedLimit=1', '-c', 'http.lowSpeedTime=5', '-C', str(path), *args],
+        check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+
+
+def setup():
+    home = Path.home()
+    repo = home / 'simplewm'
+    data = Path(os.environ.get('SIMPLEWM_SYSTEM_DATA_DIR', '/usr/local/share/simplewm'))
+    config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config')) / 'simplewm'
+    if not repo.exists():
+        bundle = data / 'source.bundle'
+        origin = 'https://github.com/kjwat/simplewm.git'
+        with tempfile.TemporaryDirectory(dir=home, prefix='.simplewm-setup-') as tmp:
+            staging = Path(tmp) / 'source'
+            git(home, 'clone', '--quiet', str(bundle) if bundle.exists() else origin, str(staging))
+            git(staging, 'remote', 'set-url', 'origin', origin)
+            snapshot = data / 'source'
+            if snapshot.is_dir():
+                shutil.copytree(snapshot, staging, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'))
+            staging.rename(repo)
+    if Path(git(repo, 'rev-parse', '--show-toplevel')).resolve() != repo.resolve():
+        raise RuntimeError(f'{repo} must be its own Git checkout')
+    config.parent.mkdir(parents=True, exist_ok=True)
+    if config.is_symlink():
+        if config.resolve() != repo.resolve():
+            raise RuntimeError(f'{config} already links elsewhere; preserved')
+        return
+    if config.exists() and not config.is_dir():
+        raise RuntimeError(f'{config} is not a directory; preserved')
+    pending = {}
+    if config.exists():
+        for path in config.rglob('*'):
+            relative = path.relative_to(config)
+            if '.git' in relative.parts or path.is_symlink():
+                raise RuntimeError(f'Unexpected linked/metadata entry: {path}; preserved')
+            if not path.is_file():
+                continue
+            target = repo / relative
+            content = path.read_bytes()
+            if target.exists() and target.read_bytes() != content:
+                if relative != Path('config'):
+                    raise RuntimeError(f'Conflicting settings: {target} and {path}; preserved')
+                base = data / 'config'
+                if not base.exists():
+                    raise RuntimeError('Cannot merge settings without installed defaults')
+                result = subprocess.run(['git', 'merge-file', '-p', str(target), str(base), str(path)],
+                    capture_output=True, timeout=10)
+                if result.returncode:
+                    raise RuntimeError('Both configs have conflicting edits; originals preserved')
+                content = result.stdout
+            pending[target] = content
+    state = Path(os.environ.get('XDG_STATE_HOME', home / '.local/state')) / 'simplewm'
+    state.mkdir(parents=True, exist_ok=True)
+    backup = Path(tempfile.mkdtemp(prefix='config-before-link-', dir=state))
+    originals = {p: p.read_bytes() if p.exists() else None for p in pending}
+    moved = False
+    try:
+        for path, content in pending.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if originals[path] is not None:
+                saved = backup / 'source' / path.relative_to(repo)
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                saved.write_bytes(originals[path])
+            path.write_bytes(content)
+        if config.exists():
+            config.rename(backup / 'old-config')
+            moved = True
+        config.symlink_to(os.path.relpath(repo, config.parent), target_is_directory=True)
+    except BaseException:
+        if config.is_symlink():
+            config.unlink()
+        if moved:
+            (backup / 'old-config').rename(config)
+        for path, content in originals.items():
+            if content is None: path.unlink(missing_ok=True)
+            else: path.write_bytes(content)
+        raise
+    print(f'Settings: {repo}/config; {config} points to that same directory.')
+    print(f'Previous settings preserved in {backup}')
+
+
+if __name__ == '__main__':
+    try:
+        setup()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        sys.exit(f'SimpleWM setup: {error}')

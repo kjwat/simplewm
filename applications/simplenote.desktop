@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Notes — simplenote
+Exec=simpleterm -e simplenote
+TryExec=simplenote
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplenote;Notes;

@@ -259,10 +259,17 @@ static int dispatch(const Binding *b)
   if (!strcmp(b->arg,"previous")) { view(&(Arg){0}); break; }
   if (!strcmp(b->arg,"next") || !strcmp(b->arg,"prev")) {
    int current=__builtin_ctz(selmon->tagset[selmon->seltags]);
-   current=(current+(!strcmp(b->arg,"next")?1:TAGCOUNT-1))%TAGCOUNT;
+   current+=!strcmp(b->arg,"next")?1:-1;
+   if (current<0 || current>=TAGCOUNT) break;
    arg.ui=1u<<current;
   } else arg.ui=1u<<(atoi(b->arg)-1);
-  view(&arg); break;
+  view(&arg);
+  if (!getenv("SIMPLEWM_NO_NOTIFICATIONS")) {
+   char message[256];
+   snprintf(message,sizeof(message),"notify-send -a SimpleWM -t 1000 -h string:x-canonical-private-synchronous:workspace 'Workspace %d of %d'",__builtin_ctz(selmon->tagset[selmon->seltags])+1,TAGCOUNT);
+   run_shell(message);
+  }
+  break;
  case A_SEND: tag(&(Arg){.ui=1u<<(atoi(b->arg)-1)}); break;
  case A_LAYOUT: setlayout(&(Arg){.v=&layouts[cfg_layout(b->arg)]}); break;
  case A_RATIO: setmfact(&(Arg){.f=(float)atof(b->arg)}); break;

@@ -1,4 +1,4 @@
-# SimpleWM — a quiet writing desk. Copy to ~/.config/simplewm/config.
+# SimpleWM — edit ~/simplewm/config. ~/.config/simplewm is the same directory.
 # Reload: Super+Shift+R. Validate: simplewm --check-config -c PATH.
 # Commands after exec are shell commands. Quotes work; # starts a comment.
 set $mod Super
@@ -17,7 +17,7 @@ color background #101313
 color inactive #343d3b
 color focused #92a58e
 color urgent #d3a175
-background /usr/local/share/backgrounds/simpleos/simpleos-background.png fit
+background /usr/local/share/backgrounds/simpleos/simpleos-background.png fill
 font "Ubuntu Sans 11"
 monospace_font "Ubuntu Sans Mono 13"
 font_hinting slight
@@ -40,7 +40,7 @@ output * scale=1 position=auto mode=preferred transform=normal adaptive_sync=no 
 
 bindsym $mod+Return exec $terminal
 bindsym $mod+space exec $browser
-bindsym $mod+a exec $wordprocessor
+bindsym Ctrl+a exec $wordprocessor
 bindsym $mod+z close
 bindsym Ctrl+Up maximize
 bindsym Ctrl+Down restore
@@ -79,7 +79,7 @@ bindsym $mod+Shift+7 send 7
 bindsym $mod+Shift+8 send 8
 bindsym $mod+Shift+9 send 9
 bindsym $mod+c layout columns
-bindsym $mod+s layout stack
+bindsym $mod+Shift+s layout stack
 bindsym $mod+m layout paper
 bindsym $mod+Shift+space layout float
 bindsym $mod+minus ratio -0.05
@@ -88,7 +88,7 @@ bindsym $mod+comma monitor left
 bindsym $mod+period monitor right
 bindsym $mod+Shift+comma send_monitor left
 bindsym $mod+Shift+period send_monitor right
-bindsym $mod+d exec simplewm-launcher
+bindsym $mod+s exec simplewm-launcher
 bindsym $mod+F1 exec simplewm-help
 bindsym $mod+Shift+r reload
 bindsym $mod+Shift+c exec simpleterm -e nano ~/.config/simplewm/config
@@ -98,10 +98,10 @@ bindsym $mod+v exec simpleterm -e simplevol
 bindsym $mod+b exec simpleterm -e simpleblue
 bindsym $mod+e exec simpleterm -e simplefiles
 bindsym $mod+x exec simpleterm -e simplewords
-bindsym $mod+w exec simpleterm -e wallpaper-theme --wizard
+bindsym $mod+w exec wallpaper-theme --gui
 bindsym $mod+Shift+q exec simplewm-power
-bindsym Print exec simplewm-screenshot
-bindsym Shift+Print exec simplewm-screenshot region
+bindsym Print exec simplewm-screenshot region
+bindsym Shift+Print exec simplewm-screenshot full
 bindsym XF86AudioRaiseVolume exec wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+
 bindsym XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
 bindsym XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
@@ -121,3 +121,5 @@ rule app_id=org.gnome.Calculator floating=yes
 # Session services run once; reload never relaunches them.
 exec simplewm-services
 # include ~/.config/simplewm/local.conf
+
+include palette*.conf

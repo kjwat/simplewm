@@ -29,10 +29,10 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
     home.mkdir()
     config = root / 'config'
     base = (source / 'config').read_text().replace('exec simplewm-services', '# services disabled in isolated tests')
-    base = base.replace('background /usr/local/share/backgrounds/simpleos/simpleos-background.png fit', 'background none')
+    base = base.replace('background /usr/local/share/backgrounds/simpleos/simpleos-background.png fill', 'background none')
     config.write_text(base)
     env = os.environ.copy()
-    env.update(HOME=str(home), XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless',
+    env.update(SIMPLEWM_NO_NOTIFICATIONS='1', HOME=str(home), XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless',
                WLR_HEADLESS_OUTPUTS='2', WLR_RENDERER='pixman', GDK_BACKEND='wayland',
                GSETTINGS_BACKEND='memory', NO_AT_BRIDGE='1', XDG_CONFIG_HOME=str(home / '.config'))
     env.pop('DISPLAY', None)
@@ -72,6 +72,27 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
             children.append(child)
         def active(): return next(c for c in status()['clients'] if c['active'])
         assert len(status()['outputs']) == 2
+        request('workspace 1'); request('workspace prev')
+        assert status()['outputs'][0]['workspace'] == 1
+        request('workspace 9'); request('workspace next')
+        assert sorted(o['workspace'] for o in status()['outputs']) == [1, 9]
+        request('workspace 1')
+
+        # GTK portal dialogs export a parent across process boundaries.
+        probe = root / 'foreign-dialog'
+        flags = subprocess.check_output(['pkg-config','--cflags','--libs','gtk+-3.0'],text=True).split()
+        subprocess.run(['cc', str(source/'tests/foreign-dialog.c'), '-o', str(probe), *flags],check=True)
+        handle = root / 'foreign-handle'
+        parent = subprocess.Popen([str(probe),'parent',str(handle)],env=env,stdout=log,stderr=log)
+        children.append(parent)
+        wait_for(lambda: handle.exists() and handle.stat().st_size, 'exported parent handle')
+        wait_for(lambda: any(c['title']=='Portal Parent' for c in status()['clients']), 'portal parent mapped')
+        dialog = subprocess.Popen([str(probe),'child',str(handle)],env=env,stdout=log,stderr=log)
+        children.append(dialog)
+        wait_for(lambda: any(c['title']=='Portal Dialog' and c['floating'] for c in status()['clients']), 'foreign dialog floats with its parent')
+        dialog.terminate(); parent.terminate()
+        dialog.wait(timeout=5); parent.wait(timeout=5)
+        wait_for(lambda: not status()['clients'], 'portal probes closed')
         launch('Writer')
         wait_for(lambda: len(status()['clients']) == 1, 'first native window')
         one = active()

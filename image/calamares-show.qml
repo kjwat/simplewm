@@ -66,7 +66,7 @@ Presentation {
                 font.pixelSize: 22
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
-                text: "After reboot, sign in and SimpleWM opens.\nWindows+Enter: Simpleterm. Windows+Space: Firefox.\nCtrl+Up: maximize. Ctrl+Down: restore.\nWindows+F1: the keys. simpleupdate: stay current."
+                text: "After reboot, sign in and SimpleWM opens.\nWindows+S: apps. Windows+Enter: terminal.\nCtrl+A: Writer. Print: select and copy a screenshot.\nCtrl+Up: maximize. Ctrl+Down: restore.\nWindows+F1: the keys. simpleupdate: stay current."
             }
         }
     }

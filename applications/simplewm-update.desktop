@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Software Updates
+Exec=simplewm-update
+TryExec=simplewm-update
+Icon=system-software-update
+Terminal=false
+Categories=Utility;
+Keywords=updates;upgrade;simpleupdate;

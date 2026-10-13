@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Wallpaper and Colors
+Exec=wallpaper-theme --gui
+TryExec=wallpaper-theme
+Icon=preferences-desktop-wallpaper
+Terminal=false
+Categories=Utility;
+Keywords=wallpaper;theme;zoom;appearance;

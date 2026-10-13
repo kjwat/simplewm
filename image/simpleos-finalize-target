@@ -7,6 +7,17 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 [ -x /usr/local/bin/simpleupdate ]
 [ -f /etc/apt/sources.list.d/liquorix.sources ]
 [ -n "$(find /boot -maxdepth 1 -name 'vmlinuz-*-liquorix-amd64' -type f -print -quit)" ]
+# Every installed user gets the editable checkout and the same live config path.
+python3 - <<'PYSETUP'
+import os, pwd, subprocess
+from pathlib import Path
+for account in pwd.getpwall():
+    if 1000 <= account.pw_uid < 60000 and Path(account.pw_dir).is_dir():
+        subprocess.run(['runuser', '-u', account.pw_name, '--', 'env',
+                        'HOME='+account.pw_dir, 'XDG_CONFIG_HOME='+account.pw_dir+'/.config',
+                        'XDG_STATE_HOME='+account.pw_dir+'/.local/state',
+                        '/usr/local/bin/simplewm-setup'], check=True)
+PYSETUP
 ssh-keygen -A
 [ ! -e /var/lib/tailscale/tailscaled.state ] || {
     printf '%s\n' 'Refusing to install a cloned Tailscale identity.' >&2

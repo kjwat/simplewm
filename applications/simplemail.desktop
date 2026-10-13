@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Mail — simplemail
+Exec=simpleterm -e simplemail
+TryExec=simplemail
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simplemail;Mail;

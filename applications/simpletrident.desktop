@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Cloud Sync — simpletrident
+Exec=simpleterm -e simpletrident
+TryExec=simpletrident
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+Keywords=simpletrident;Cloud Sync;
