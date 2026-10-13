@@ -43,8 +43,12 @@ Git metadata do not belong in the source snapshot.
 The image builder generates all Bash application shortcuts from the staged
 Suite's `command-abbreviations`, plus `term`, `check`, and `trident`. It rejects
 missing executable targets instead of shipping incomplete aliases. Run
-`python3 tests/image-check.py`, `python3 tests/setup-check.py`, and
-`python3 tests/update-check.py` before repacking. The offline source bundle
+`python3 tests/image-check.py`, `python3 tests/setup-check.py`,
+`python3 tests/update-check.py`, and `python3 tests/update-logic-check.py` before
+repacking. Update comparisons use ancestry for both Suite and WM; older,
+diverged, and unrecorded installed histories are preserved. Suite updates also
+install a Git bundle so later comparisons retain the installed history.
+The offline source bundle
 must include `main`; setup explicitly checks out that branch.
 
 Finally:

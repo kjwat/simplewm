@@ -100,7 +100,8 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
     opts = dict(env=env, preexec_fn=demote)
     run(git + ['init', '--quiet', str(source)], **opts)
     run(git + ['-C', str(source), 'remote', 'add', 'origin', origin], **opts)
-    run(git + ['-C', str(source), 'fetch', *(['--depth=1'] if origin == OFFICIAL else []), '--no-tags', 'origin', 'HEAD'], **opts)
+    # Both components need commit ancestry, including after a fresh ISO install.
+    run(git + ['-C', str(source), 'fetch', '--no-tags', 'origin', 'HEAD'], **opts)
     sha = run(git + ['-C', str(source), 'rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
               capture_output=True, text=True, **opts).stdout.strip()
     if not re.fullmatch(r'[0-9a-f]{40,64}', sha):
@@ -110,6 +111,45 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
     run(git + ['-C', str(source), 'fsck', '--strict', '--no-reflogs', sha], **opts)
     run(git + ['-C', str(source), 'checkout', '--quiet', '--detach', sha], **opts)
     return sha
+
+def published_update_allowed(component, source, sha, current, env, demote):
+    """Accept equal/newer releases; preserve local, older and divergent releases."""
+    if not current or current == sha:
+        return True
+    if current.startswith('local-'):
+        say(f'{component}: preserving the explicitly installed local source')
+        return False
+    opts = dict(env=env, preexec_fn=demote)
+    bundle = PREFIX / f'share/{component.lower()}/source.bundle'
+    if bundle.exists():
+        run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(source),
+             'fetch', '--quiet', str(bundle), 'main'], **opts)
+    present = subprocess.run(['git', '-C', str(source), 'rev-parse', '--verify',
+                              '--quiet', current + '^{commit}'],
+                             capture_output=True, text=True, **opts)
+    if present.returncode == 1:
+        if bundle.exists():
+            raise RuntimeError(f'{component} installed history does not match its manifest')
+        # Older images have a source snapshot but no Suite Git bundle. Missing
+        # history cannot establish that a different published commit is newer.
+        say(f'{component}: published history does not include the installed release; keeping it')
+        return False
+    present.check_returncode()
+    run(['git', '-C', str(source), 'fsck', '--strict', '--no-reflogs', sha, current], **opts)
+    def ancestor(first, second):
+        result = subprocess.run(['git', '-C', str(source), 'merge-base',
+                                 '--is-ancestor', first, second],
+                                capture_output=True, text=True, **opts)
+        if result.returncode not in (0, 1):
+            result.check_returncode()
+        return result.returncode == 0
+    if ancestor(current, sha):
+        return True
+    if ancestor(sha, current):
+        say(f'{component} {current[:12]}: no newer published release; no update needed')
+    else:
+        say(f'{component}: published branch diverges from the installed release; keeping it')
+    return False
 
 def build_and_test(source, stage, sha, env, demote, verify=False):
     common = ['make', '-C', str(source), f'SIMPLESUITE_SOURCE_SHA={sha}',
@@ -139,6 +179,11 @@ def build_and_test(source, stage, sha, env, demote, verify=False):
     snapshot = local / 'share/simplesuite/source'
     shutil.copytree(source, snapshot, ignore=shutil.ignore_patterns('.git', 'build', '__pycache__'), symlinks=True)
     (local / 'share/simplesuite/install-source').write_text('/usr/local/share/simplesuite/source\n')
+    # Keep the installed ancestry for subsequent update decisions, including
+    # when the published branch is rolled back or rewritten.
+    run(['git', '-C', str(source), 'branch', '-f', 'main', sha], **opts)
+    run(['git', '-C', str(source), 'bundle', 'create',
+         str(local / 'share/simplesuite/source.bundle'), 'main'], **opts)
     # Daemon placement follows the suite's system policy, without changing units or roles.
     daemon = local / 'bin/simpleserved'
     if daemon.exists():
@@ -188,7 +233,8 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     run(common + ['CFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter'], **opts)
     run([str(source / 'build/simplewm'), '--check-config', '-c', str(source / 'config')], **opts)
     if verify:
-        for check in ('config-check.py', 'update-check.py', 'theme-check.py', 'setup-check.py'):
+        for check in ('config-check.py', 'update-check.py', 'update-logic-check.py',
+                      'theme-check.py', 'setup-check.py', 'image-check.py'):
             run(['python3', str(source / 'tests' / check)], **opts)
         run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)
     run(common + [f'DESTDIR={stage}', 'install'], **opts)
@@ -199,8 +245,9 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     shutil.copytree(source, local / 'share/simplewm/source',
                     ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'), symlinks=True)
     (local / 'share/simplewm/install-manifest').write_text(f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n')
-    run(['git', '-C', str(source), 'branch', '-f', 'main', sha], **opts)
-    run(['git', '-C', str(source), 'bundle', 'create', str(local / 'share/simplewm/source.bundle'), 'main'], **opts)
+    if not sha.startswith('local-'):
+        run(['git', '-C', str(source), 'branch', '-f', 'main', sha], **opts)
+        run(['git', '-C', str(source), 'bundle', 'create', str(local / 'share/simplewm/source.bundle'), 'main'], **opts)
     result = run(['ldd', str(local / 'bin/simplewm')], capture_output=True, text=True)
     if 'not found' in result.stdout:
         raise RuntimeError('SimpleWM has missing runtime libraries')
@@ -238,16 +285,8 @@ def update_wm(args, work, env, demote, uid, gid, log):
     else:
         say(f'Fetching only {OFFICIAL_WM}')
         sha = fetch_source(source, env, demote, OFFICIAL_WM)
-    bundle = PREFIX / 'share/simplewm/source.bundle'
-    if original is None and current and bundle.exists() and re.fullmatch(r'[0-9a-f]{40}', current):
-        # A locally built release may be ahead of the published branch. Never
-        # silently replace it with an older upstream commit.
-        run(['git', '-C', str(source), 'fetch', '--quiet', str(bundle), 'main'], env=env, preexec_fn=demote)
-        older = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', sha, current],
-                               env=env, preexec_fn=demote).returncode == 0
-        if older and sha != current:
-            say(f'SimpleWM {current[:12]}: no newer published release; no update needed')
-            return
+    if original is None and not published_update_allowed('SimpleWM', source, sha, current, env, demote):
+        return
     if current == sha and not args.rebuild:
         say(f'SimpleWM {sha[:18]} is current; no build needed')
         return
@@ -260,9 +299,32 @@ def update_wm(args, work, env, demote, uid, gid, log):
     log.write(f'SimpleWM source: {OFFICIAL_WM if original is None else original}\nRevision: {sha}\n')
     log.flush()
     local = build_and_test_wm(source, stage, sha, env, demote, args.verify)
-    install_transaction(local)
+    install_transaction(local, PREFIX)
     log.write(f'SimpleWM installed; full verification={args.verify}.\n'); log.flush()
     say('SimpleWM installed; the running session stays available until your next login')
+
+def update_suite(args, work, env, demote, uid, gid, log):
+    say(f'Fetching only {OFFICIAL}')
+    source = work / 'source'
+    sha = fetch_source(source, env, demote)
+    installed = installed_revision(MANIFEST)
+    if not published_update_allowed('SimpleSuite', source, sha, installed, env, demote):
+        return
+    if sha == installed and not args.rebuild:
+        say(f'SimpleSuite {sha[:12]} is current; no build needed')
+        return
+    if args.check:
+        say(f'SimpleSuite {installed or "unrecorded"} -> {sha}; no installation')
+        return
+    run(['apt-get', '-y', '--no-install-recommends', 'install', *BUILD_PACKAGES])
+    stage = work / 'stage'
+    stage.mkdir(); os.chown(stage, uid, gid)
+    log.write(f'Official source: {OFFICIAL}\nRevision: {sha}\n'); log.flush()
+    local = build_and_test(source, stage, sha, env, demote, args.verify)
+    log.write(f'Suite build and library checks passed; full verification={args.verify}.\n'); log.flush()
+    install_transaction(local, PREFIX)
+    log.write('SimpleSuite installation committed.\n')
+    say(f'SimpleSuite {sha[:12]} installed; existing applications can finish normally')
 
 def validate_local(stage):
     for item in stage.rglob('*'):
@@ -419,24 +481,7 @@ def main():
             LOG_STREAM = log
             say(f'Update transcript: {logfile}')
             if not args.wm_only:
-                say(f'Fetching only {OFFICIAL}')
-                source = work / 'source'
-                sha = fetch_source(source, env, demote)
-                installed = installed_revision()
-                if sha == installed and not args.rebuild:
-                    say(f'SimpleSuite {sha[:12]} is current; no build needed')
-                elif args.check:
-                    say(f'SimpleSuite {installed or "unrecorded"} -> {sha}; no installation')
-                else:
-                    run(['apt-get', '-y', '--no-install-recommends', 'install', *BUILD_PACKAGES])
-                    stage = work / 'stage'
-                    stage.mkdir(); os.chown(stage, uid, gid)
-                    log.write(f'Official source: {OFFICIAL}\nRevision: {sha}\n'); log.flush()
-                    local = build_and_test(source, stage, sha, env, demote, args.verify)
-                    log.write(f'Suite build and library checks passed; full verification={args.verify}.\n'); log.flush()
-                    install_transaction(local)
-                    log.write('SimpleSuite installation committed.\n')
-                    say(f'SimpleSuite {sha[:12]} installed; existing applications can finish normally')
+                update_suite(args, work, env, demote, uid, gid, log)
             if not args.suite_only:
                 update_wm(args, work, env, demote, uid, gid, log)
             LOG_STREAM = None
