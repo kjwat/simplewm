@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix='seed-check-') as temp:
     assert json.loads(run('python3', '-I', engine, '--bootstrap-probe').stdout) == {'protocol': 1, 'version': 1}
     help_text = run('python3', '-I', engine, '--help').stdout
     assert '--release-upgrade' in help_text and '--rollback-sources' in help_text
+    assert not list(payload.rglob('*.pyc')), 'installed diagnostics created bytecode caches'
     parent, child = socket.socketpair()
     process = subprocess.Popen(['python3', '-I', str(engine), '--bootstrap-ready-fd', str(child.fileno()), '--help'],
                                pass_fds=(child.fileno(),), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

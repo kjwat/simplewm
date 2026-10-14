@@ -10,6 +10,9 @@ import socket
 import subprocess
 import sys
 
+# Isolated Python ignores PYTHONDONTWRITEBYTECODE from the launcher environment.
+# Diagnostics and probes must not populate caches in an installed version.
+sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import ordinary
