@@ -152,39 +152,49 @@ executes the plan. HTTPS release detection still needs network access.
 `--check` retains the existing update-checking interface and may refresh APT
 caches and fetch temporary Git sources; it never approves a release upgrade.
 
-Git uses verified HTTPS, refuses redirects and file/exec transports, checks
-objects, and ignores user Git settings, hooks, and credential helpers. There is
-no claim of independent signature verification: trust is in these official
-GitHub repositories and HTTPS. Builds and tests run without root privileges in
-a private temporary home. An unchanged installed revision skips rebuilding.
-Normal updates build changed revisions and install them without running developer
-tests. `--verify` explicitly adds the full release suites. SimpleWM configuration
-and runtime-library checks always run before installation. Each
-component has a recoverable source-install transaction; a failed build never reaches the
-installation, and partial installation restores that component's old files.
-Successful earlier components remain updated if a later component fails.
+New installations start with a small stable launcher and an independently
+signed, versioned updater. A normal `simpleupdate` invocation checks for updater
+improvements first. The launcher verifies the release signature against the
+public key installed with the ISO, then checks every payload's size and SHA-256.
+Only an initialized replacement can become active; it receives the original
+request after activation is durable. The previous updater and the ISO seed are
+retained for recovery. Ordinary WM installation cannot replace the launcher,
+trust key or active updater with an older bundled version.
 
-The 0.8-r2 and 0.8-r3 ISOs ship published Suite and WM revisions and their Git
-history. Their original updaters install changed components, including
-Simpleterm and the updater itself, in one ordinary run of `simpleupdate`.
-No component flags or preliminary updater command are needed.
+Ordinary Suite/WM source retrieval still trusts the official GitHub repositories
+and HTTPS; source components do not gain independent release signatures. Git
+refuses redirects and file/exec transports, checks objects and ancestry, and
+ignores user Git settings, hooks and credential helpers. Unchanged revisions
+skip builds. Builds run as `nobody` in a private temporary home; `--verify` adds
+the developer test suites. Configuration, runtime-library checks and a private
+headless SimpleWM startup check run before installing a changed compositor.
 
-Self-update belongs to the SimpleWM payload. After the APT phase and Suite
-update, the old updater fetches the official WM revision, checks its objects
-and ancestry, installs its declared build dependencies, and builds it as
-`nobody`. The fetched Makefile stages `scripts/simpleupdate` under
-`/usr/local/bin/simpleupdate`, together with the compositor, locker and updater
-helper. The old updater installs that payload in its recoverable transaction,
-writing the revision manifest last. Its already-loaded Python process finishes
-normally; the next invocation loads the replacement script.
+Both changed source components are built before either is installed. Their
+payloads, ownership inventory and provenance records form one durable
+transaction. Interrupted source installation is recovered before network
+access on the next ordinary invocation. Locally edited shared configuration
+and unrelated files are preserved; conflicts with locally modified programs
+stop installation. The last successful source transaction is retained.
 
-`tests/update-plain-check.py` covers r2, r3 and current updaters with real Git
-history and transactions, then loads the installed replacement for the repeat
-run. `tests/update-iso-check.py` additionally runs the untouched r3 ISO executable
-twice in a copy of its original filesystem, with real root/`nobody` identities,
-APT dependency installation and compilation. Git transport uses local HTTP
-fixtures for unpublished source, and OS full-upgrade is simulated. See
-[VALIDATION.md](VALIDATION.md) for the ISO check and reproduction command.
+`simpleupdate --status` shows the last ordinary operation. Use
+`simpleupdate --rollback-sources` from a console to restore the previous Suite/WM
+files if the new session fails on your hardware. This works offline and does
+not roll back Debian packages. `simpleupdate --previous-updater` selects the
+previous verified updater and continues the request. Downloads and builds are
+quiet by default; `--verbose` shows their output, and transcripts remain in
+`/var/log/simpleupdate`.
+
+APT remains non-atomic. Package downloads precede installation, but a package
+failure can require `sudo dpkg --configure -a` and `sudo apt-get -f install`
+before retrying. Source rollback is not whole-system rollback. Explicit Debian
+major upgrades and pending major-upgrade recovery retain their existing
+implementation and sequence. A headless startup check cannot guarantee the
+next hardware-backed login.
+
+This bootstrap is established by the next ISO. The archived r2/r3 updater tests
+remain historical regression evidence; they do not establish a same-invocation
+handoff from an already-running old Python script. Release and image assembly
+instructions are in [updater/README.md](updater/README.md).
 
 Simpleterm is built and installed with every changed SimpleSuite release,
 including its Bash prompt asset. Published terminal fixes arrive through the

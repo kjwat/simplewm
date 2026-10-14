@@ -47,8 +47,9 @@ install: all
 	install -Dm644 LICENSE.pam $(DESTDIR)$(PREFIX)/share/doc/simplewm/LICENSE.pam
 	install -Dm644 HELP.txt $(DESTDIR)$(PREFIX)/share/simplewm/HELP.txt
 	install -Dm644 simplewm.desktop $(DESTDIR)$(PREFIX)/share/wayland-sessions/simplewm.desktop
-	for f in scripts/simplewm-* scripts/simplewmctl scripts/simpleupdate; do install -m755 $$f $(DESTDIR)$(PREFIX)/bin/; done
+	for f in scripts/simplewm-* scripts/simplewmctl; do install -m755 $$f $(DESTDIR)$(PREFIX)/bin/; done
 	install -Dm755 scripts/simpleupdate-target $(DESTDIR)$(PREFIX)/bin/simpleupdate-target
+	python3 updater/install.py --destdir "$(DESTDIR)" --prefix "$(PREFIX)"
 	install -m755 scripts/wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/
 	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme
 	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme.sh

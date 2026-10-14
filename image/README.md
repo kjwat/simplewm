@@ -52,6 +52,20 @@ install a Git bundle so later comparisons retain the installed history.
 The offline source bundle
 must include `main`; setup explicitly checks out that branch.
 
+Before repacking a new-bootstrap image, stage both components with their source
+snapshots, Git bundles and manifests, and finalize the updater seed:
+
+```sh
+sudo python3 image/seed-updater.py ROOTFS \
+  --payload SUITE_PAYLOAD/usr/local --payload WM_PAYLOAD/usr/local
+```
+
+This verifies the signed updater and every explicitly packaged file, records
+ownership without adopting unrelated files, and fixes system parent ownership
+and permissions. Keep the signing key outside the image. Publish and verify the
+authenticated updater endpoint before shipping; see `../updater/README.md`.
+No updater state or retained test recovery transaction belongs in a fresh ISO.
+
 Finally:
 
 ```sh

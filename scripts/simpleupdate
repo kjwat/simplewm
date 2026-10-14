@@ -24,6 +24,10 @@ OFFICIAL = 'https://github.com/kjwat/simplesuite.git'
 OFFICIAL_WM = 'https://github.com/kjwat/simplewm.git'
 PREFIX = Path('/usr/local')
 LOG_STREAM = None
+# The versioned entry point supplies ordinary orchestration. Debian migration
+# and standalone legacy callers continue through the original branches below.
+ORDINARY_UPDATE = None
+QUIET = False
 MANIFEST = PREFIX / 'share/simplesuite/install-manifest'
 WM_MANIFEST = PREFIX / 'share/simplewm/install-manifest'
 WM_SOURCE = PREFIX / 'share/simplewm/source'
@@ -78,7 +82,8 @@ def run(args, **kwargs):
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, errors='replace', **kwargs)
         for line in process.stdout:
-            print(line, end='', flush=True)
+            if not QUIET:
+                print(line, end='', flush=True)
             LOG_STREAM.write(line)
             LOG_STREAM.flush()
         code = process.wait()
@@ -1224,6 +1229,10 @@ def main():
     parser.add_argument('--wm-only', action='store_true', help='only SimpleWM')
     parser.add_argument('--wm-local', type=Path, help='build/test an explicitly chosen local SimpleWM source folder')
     parser.add_argument('--rebuild', action='store_true', help='retest/reinstall even when the revision is unchanged')
+    if ORDINARY_UPDATE is not None:
+        parser.add_argument('--verbose', action='store_true', help='show build and package command output')
+        parser.add_argument('--status', action='store_true', help='show the last ordinary update state')
+        parser.add_argument('--rollback-sources', action='store_true', help='restore the previous Suite/WM files; Debian packages are not rolled back')
     args = parser.parse_args()
     if sum((args.os_only, args.suite_only, args.wm_only)) > 1:
         parser.error('choose one update scope')
@@ -1265,6 +1274,9 @@ def main():
                         return
                 if not upgrading:
                     recover_transaction()
+                if not upgrading and not recovering and ORDINARY_UPDATE is not None:
+                    ORDINARY_UPDATE(sys.modules[__name__], args, log)
+                    return
                 if not upgrading:
                     changes = apt_source_changes(current[1])
                     if args.check and changes:
@@ -1310,8 +1322,12 @@ def main():
                         complete_release()
                         say('Both release-recovery rebuilds completed; reboot before starting SimpleWM')
         except BaseException as error:
-            say(f'Update failed: {error}.' + ('' if upgrading or recovering else
-                ' A failing source component keeps its binaries; completed components remain updated.'))
+            if ORDINARY_UPDATE is not None and not upgrading and not recovering:
+                say(f'Update failed: {error}. Source recovery and package status are recorded; '
+                    'Debian packages are not rolled back. See simpleupdate --status and this transcript.')
+            else:
+                say(f'Update failed: {error}.' + ('' if upgrading or recovering else
+                    ' A failing source component keeps its binaries; completed components remain updated.'))
             raise
         finally:
             LOG_STREAM = None

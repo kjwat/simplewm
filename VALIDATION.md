@@ -1,5 +1,49 @@
 # SimpleOS 0.8 verification
 
+Authenticated bootstrap verification on 2026-10-14 (new ISO architecture):
+
+- The stable launcher, signed/versioned engine and grouped ordinary-source
+  transaction are exercised by `update-bootstrap-check.py`,
+  `update-durable-check.py`, `update-ordinary-check.py` and `update-seed-check.py`.
+  Real signatures, real child processes, durable file replacement, abrupt process
+  exits during install and recovery, failed-build grouping, ownership preservation,
+  minimum-updater requirements and activation acknowledgement all pass.
+- `update-installed-check.py` passed in a disposable copy of the cached r3
+  userspace. Seed installation uses the actual Makefile. A real signed future
+  updater is downloaded as UID/GID 65534, activated, and handles the same plain
+  request. WM compilation/staging runs as nobody, APT dependencies install as
+  root, and real headless compositor IPC confirms an initialized output.
+- The installed test also passed unchanged repeat, offline source rollback,
+  failed replacement fallback, rejected-version repeat, interrupted activation,
+  corrupted signature refusal and interrupted source recovery before a failing
+  network request. Personal configuration, manuscripts and unknown tools survive.
+  Evidence: `/home/keelan/.cache/simplewm-update-audit/installed-test-9/output/result.json`.
+- HTTPS/Git transport use isolated fixtures for unpublished code. The test TLS
+  certificate is trusted only inside the copied rootfs. Full Debian/Liquorix
+  upgrade is simulated; package dependencies, Git history, compilation and
+  installation are real. This is not a VM boot/Calamares/hardware-login test.
+- Existing updater, release and target checks pass unchanged. Every original
+  Python function except the ordinary dispatch/output hooks is AST-identical
+  to the baseline; the target helper, dependency metadata and migration tests
+  are unmodified. No host APT or live-system installation was performed.
+- The expanded installed run also passed real Suite compilation (including
+  Simpleterm), grouped Suite/WM rebuild, and image seed finalization over 485
+  explicitly packaged paths. It verified root ownership and the production
+  image inventory tool. Final ISO artifacts and their checksums are recorded
+  separately in the release build report.
+
+Reproduction requires root, Python 3, OpenSSL, Git and Bubblewrap. The test uses
+local HTTPS port 443 and writes only a newly created work directory:
+
+```sh
+sudo python3 tests/update-installed-check.py \
+  --rootfs /path/to/cached-iso-test-root \
+  --work-dir /path/to/new-disposable-test
+```
+
+The following r3 self-replacement evidence predates the new bootstrap and does
+not validate its protocol or claim an in-flight handoff from the old updater.
+
 Updater self-replacement verification on 2026-10-14:
 
 - The original `simpleos-0.8-r3-amd64.iso` matches its recorded SHA-256:
