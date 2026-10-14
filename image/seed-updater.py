@@ -27,9 +27,8 @@ def main():
     os.umask(0o022)
     prefix = root / 'usr/local'
     data = prefix / 'share/simpleupdate'
-    metadata, name = bootstrap.manifest(data, data / 'release-key.pem')
-    _, installed = bootstrap.verify_payload(prefix / 'libexec/simpleupdate/versions' / name,
-                                             data / 'release-key.pem')
+    metadata, name = bootstrap.manifest(data)
+    _, installed = bootstrap.verify_payload(prefix / 'libexec/simpleupdate/versions' / name)
     if installed != name:
         parser.error('seed metadata differs from its version directory')
     owned = {}
@@ -55,8 +54,8 @@ def main():
         for name in ('install-manifest', 'source.bundle'):
             if f'share/{component}/{name}' not in owned:
                 parser.error(f'missing explicit {component} provenance payload: {name}')
-    if 'bin/simpleupdate' not in owned or 'share/simpleupdate/release-key.pem' not in owned:
-        parser.error('the signed updater seed must be part of the explicit WM payload')
+    if 'bin/simpleupdate' not in owned or 'share/simpleupdate/release.json' not in owned:
+        parser.error('the versioned updater seed must be part of the explicit WM payload')
     directories = {root / 'usr', prefix, root / 'var', root / 'var/lib'}
     for name in owned:
         path = prefix / name
@@ -76,7 +75,7 @@ def main():
         path = root / relative
         if path.exists() and (not path.is_dir() or any(path.iterdir())):
             parser.error('image contains update/recovery state; preserve and remove it before release: ' + relative)
-    print(f'Verified signed updater {metadata["version"]} and {len(owned)} explicit package paths')
+    print(f'Verified versioned updater {metadata["version"]} and {len(owned)} explicit package paths')
 
 
 if __name__ == '__main__':

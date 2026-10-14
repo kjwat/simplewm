@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Real signed seed/update/build test inside a disposable copy of a cached ISO root.
+"""Real versioned seed/update/build test inside a disposable copy of a cached ISO root.
 
 Requires root for mount namespaces and real root/nobody separation. No host APT
 or installation. A test HTTPS origin and Git transport serve unpublished source;
@@ -112,7 +112,7 @@ def call(label,*args,success=True):
     if (result.returncode==0)!=success:raise RuntimeError(label+': '+text[-10000:])
     return text
 text=call('first')
-assert 'Authenticated future updater handles this request' in text
+assert 'Future updater handles this request' in text
 assert 'Building and checking SimpleWM' in text
 assert json.loads(Path('/var/lib/simpleupdate/ordinary.json').read_text())['updater']==2
 assert json.loads(Path('/var/lib/simpleupdate/updater.json').read_text())['active'].startswith('2-')
@@ -125,11 +125,11 @@ for path,digest in before.items():assert hashlib.sha256(Path(path).read_bytes())
 text=call('rollback','--rollback-sources')
 assert 'Previous Suite/WM files restored' in text
 assert 'simplewm_source_sha='+config['original'] in (prefix/'share/simplewm/install-manifest').read_text()
-# A fresh ordinary invocation installs the same authenticated release again.
+# A fresh ordinary invocation installs the same verified release again.
 call('after-rollback')
 text=call('rebuild-both','--rebuild')
 assert 'Building and checking SimpleSuite' in text and 'Building and checking SimpleWM' in text
-# Publish a correctly signed replacement that passes the nobody probe but
+# Publish a verified replacement that passes the nobody probe but
 # fails before READY. The actual installed launcher must continue with v2.
 (output/'published-version').write_text('3')
 text=call('failed-replacement','--wm-only')
@@ -141,9 +141,6 @@ active=state['active']
 state.update(active=state['rejected'][-1],previous=active,pending=True)
 statefile.write_text(json.dumps(state))
 assert 'activation was interrupted' in call('activation-interrupted','--wm-only')
-(output/'bad-signature').touch()
-assert 'signature is invalid' in call('bad-signature','--wm-only',success=False)
-(output/'bad-signature').unlink()
 # Kill a real source installation after its first replacement. Even with the
 # HTTPS origin down, the next invocation must replay local recovery first.
 payload=prefix/'libexec/simpleupdate/versions'/active
@@ -182,15 +179,15 @@ installs=[c for c in commands if c['command']=='apt-get' and 'install' in c['arg
 assert installs and all(c['uid']==0 for c in installs)
 for name in ('simplewm','simplewm-lock-client'):
     assert 'not found' not in subprocess.check_output(['ldd',str(prefix/'bin'/name)],text=True)
-report={'signed_seed_install':True,'future_updater_delivered':True,'same_request_continued':True,
+report={'versioned_seed_install':True,'future_updater_delivered':True,'same_request_continued':True,
         'actual_root_nobody':True,'wm_build_real':True,'headless_startup_passed':True,
         'apt_dependencies_real':True,'apt_full_upgrade_simulated':True,'repeat_skips_builds':True,
         'personal_files_preserved':True,'offline_retained_rollback':True,'target':config['target']}
 report.update(failed_replacement_fallback=True,interrupted_activation_recovered=True,
-              corrupt_signature_refused=True,offline_interrupted_source_recovery=True,
+              offline_interrupted_source_recovery=True,
               suite_build_real=True,grouped_rebuild_real=True,image_seed_finalization=True)
 (output/'result.json').write_text(json.dumps(report,indent=2)+'\n')
-print('OK real signed installation, future updater delivery, root/nobody build, repeat, personal files and offline rollback',flush=True)
+print('OK real versioned installation, future updater delivery, root/nobody build, repeat, personal files and offline rollback',flush=True)
 '''
 
 def main():
@@ -215,27 +212,21 @@ def main():
         if name.startswith('UPDATER-HANDOFF'): continue
         src=REPO/name; dst=source/name
         if src.is_file():dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
-    key=work/'release-private.pem'
-    run('openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',key,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    key.chmod(0o600)
-    run('openssl','pkey','-in',key,'-pubout','-out',source/'updater/release-key.pem',stdout=subprocess.DEVNULL)
-    # Each isolated fixture starts at version 1 even after production metadata
-    # is committed. It uses its own key and never re-signs production metadata.
-    for name in ('release.json', 'release.sig'):
-        (source/'updater'/name).unlink(missing_ok=True)
+    # Each isolated fixture starts at version 1, independently of production metadata.
+    (source/'updater/release.json').unlink(missing_ok=True)
     git('-C',source,'add','.'); git('-C',source,'commit','--quiet','-m','isolated updater implementation')
-    run('python3',source/'updater/release.py','--key',key,'--version','1')
+    run('python3',source/'updater/release.py','--version','1')
     seed=work/'seed-source'; shutil.copytree(source,seed,ignore=shutil.ignore_patterns('.git','build','__pycache__'))
     (seed/'build').mkdir()
     for name in ('simplewm','simplewm-lock-client'):
         shutil.copy2(original/'usr/local/bin'/name,seed/'build'/name)
     engine=source/'updater/engine.py'
     engine.write_text(engine.read_text().replace('    legacy.main()',
-        "    legacy.say('Authenticated future updater handles this request')\n    legacy.main()"))
+        "    legacy.say('Future updater handles this request')\n    legacy.main()"))
     git('-C',source,'add','.'); git('-C',source,'commit','--quiet','-m','isolated future updater improvement')
     payload_revision=git('-C',source,'rev-parse','HEAD')
-    run('python3',source/'updater/release.py','--key',key,'--version','2')
-    git('-C',source,'add','.'); git('-C',source,'commit','--quiet','-m','isolated signed future release')
+    run('python3',source/'updater/release.py','--version','2')
+    git('-C',source,'add','.'); git('-C',source,'commit','--quiet','-m','isolated future release')
     target=git('-C',source,'rev-parse','HEAD')
     fixture=work/'http'; fixture.mkdir()
     for name,repo,revision in (('simplewm',source,target),('simplesuite',REPO.parent/'simplesuite',
@@ -244,7 +235,7 @@ def main():
         bare=fixture/(name+'.git'); git('clone','--quiet','--bare',bundle,bare); bundle.unlink()
         git('-C',bare,'update-ref','refs/heads/main',revision); git('-C',bare,'symbolic-ref','HEAD','refs/heads/main')
         git('-C',bare,'update-server-info')
-    for name in ('release.json','release.sig'):
+    for name in ('release.json',):
         dest=fixture/'main/updater'/name; dest.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(source/'updater'/name,dest)
     spec=importlib.util.spec_from_file_location('test_boot',source/'updater/launcher.py')
@@ -253,16 +244,16 @@ def main():
         dest=fixture/payload_revision/path; dest.parent.mkdir(parents=True,exist_ok=True)
         dest.write_bytes(subprocess.check_output(['git','-c','safe.directory=*','-C',str(source),'show',payload_revision+':'+path]))
     # Keep v2 as the component source while offering v3 only through the
-    # independently authenticated updater channel.
+    # versioned updater channel.
     release2=fixture/'releases/2'; release2.mkdir(parents=True)
-    for name in ('release.json','release.sig'):shutil.copyfile(source/'updater'/name,release2/name)
+    for name in ('release.json',):shutil.copyfile(source/'updater'/name,release2/name)
     engine.write_text(engine.read_text().replace("    if sys.argv[1:2] == ['--bootstrap-ready-fd']:\n",
         "    if sys.argv[1:2] == ['--bootstrap-ready-fd']:\n        sys.exit('fixture: failed before readiness')\n"))
     git('-C',source,'add','.'); git('-C',source,'commit','--quiet','-m','isolated failed updater replacement')
     revision3=git('-C',source,'rev-parse','HEAD')
-    run('python3',source/'updater/release.py','--key',key,'--version','3')
+    run('python3',source/'updater/release.py','--version','3')
     release3=fixture/'releases/3'; release3.mkdir(parents=True)
-    for name in ('release.json','release.sig'):shutil.copyfile(source/'updater'/name,release3/name)
+    for name in ('release.json',):shutil.copyfile(source/'updater'/name,release3/name)
     for path in boot.FILES.values():
         dest=fixture/revision3/path; dest.parent.mkdir(parents=True,exist_ok=True)
         dest.write_bytes(subprocess.check_output(['git','-c','safe.directory=*','-C',str(source),'show',revision3+':'+path]))
@@ -275,8 +266,6 @@ def main():
             if self.path.startswith('/main/updater/release.'):
                 if (output/'offline').exists():
                     self.send_error(503); return
-                if self.path.endswith('.sig') and (output/'bad-signature').exists():
-                    self.send_response(200); self.end_headers(); self.wfile.write(b'bad signature'); return
                 version=(output/'published-version').read_text().strip() if (output/'published-version').exists() else '2'
                 self.path='/releases/'+version+'/'+Path(self.path).name
             super().do_GET()

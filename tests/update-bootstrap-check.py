@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Real signatures, versioned files and child processes; only transport/UIDs are fixtures."""
+"""Real versioned files and child processes; only transport/UIDs are fixtures."""
 import contextlib
 import hashlib
 import importlib.util
@@ -28,20 +28,15 @@ def child_run(*args, **kwargs):
 
 with tempfile.TemporaryDirectory(prefix='bootstrap-check-') as temp:
     root = Path(temp)
-    key = root / 'key.pem'; public = root / 'public.pem'
-    real_run(['openssl', 'genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048',
-              '-out', str(key)], check=True, capture_output=True)
-    real_run(['openssl', 'pkey', '-in', str(key), '-pubout', '-out', str(public)], check=True, capture_output=True)
     versions = root / 'versions'; versions.mkdir()
     data = root / 'data'; data.mkdir()
-    shutil.copyfile(public, data / 'release-key.pem')
     result = root / 'result'
     def release(version, broken=False):
         directory = root / f'release-{version}'; directory.mkdir()
         for name, source in boot.FILES.items():
             shutil.copyfile(ROOT / source, directory / name)
         # Simulate a future implementation while retaining the real stable
-        # launcher's signature, installation, handoff and fallback machinery.
+        # launcher's verification, installation, handoff and fallback machinery.
         (directory / 'engine.py').write_text('''import json,os,sys,socket
 from pathlib import Path
 version=json.loads(Path(__file__).with_name('release.json').read_text())['version']
@@ -58,19 +53,16 @@ Path(sys.argv[4]).write_text(str(version))
                                           'sha256': hashlib.sha256((directory / name).read_bytes()).hexdigest()}
                                     for name in boot.FILES}}).encode()
         (directory / 'release.json').write_bytes(raw)
-        real_run(['openssl', 'dgst', '-sha256', '-sign', str(key), '-out', str(directory / 'release.sig'),
-                  str(directory / 'release.json')], check=True, capture_output=True)
-        return directory, boot.manifest(directory, public)
+        return directory, boot.manifest(directory)
     initial, (metadata, name) = release(1)
     shutil.copytree(initial, versions / name)
-    for file in ('release.json', 'release.sig'):
-        shutil.copyfile(initial / file, data / file)
+    shutil.copyfile(initial / 'release.json', data / 'release.json')
     latest, _ = release(2)
     downloads = []
     def download(path, limit):
         downloads.append(path)
         file = Path(path).name
-        if file not in ('release.json', 'release.sig'):
+        if file != 'release.json':
             file = next(name for name, source in boot.FILES.items() if path.endswith('/' + source))
         return (latest / file).read_bytes()
     contexts = [patch.object(boot, 'DATA', data), patch.object(boot, 'VERSIONS', versions),
@@ -90,40 +82,32 @@ Path(sys.argv[4]).write_text(str(version))
         assert state['previous'] == name and not state['pending']
         downloads.clear()
         assert boot.main() == 0
-        assert downloads == ['main/updater/release.json', 'main/updater/release.sig']
-        print('OK signed updater-first replacement and original-argument handoff; equal version is not downloaded again')
+        assert downloads == ['main/updater/release.json']
+        print('OK updater-first replacement and original-argument handoff; equal version is not downloaded again')
         latest, _ = release(3, broken=True)
         assert boot.main() == 0 and result.read_text() == '2'
         assert json.loads((root / 'state.json').read_text())['rejected']
         downloads.clear()
-        assert boot.main() == 0 and len(downloads) == 2
+        assert boot.main() == 0 and len(downloads) == 1
         print('OK replacement failing before readiness restores and runs the previous implementation; no recursive retry')
         latest, (_, bad_name) = release(4)
-        saved = (latest / 'release.sig').read_bytes()
-        (latest / 'release.sig').write_bytes(b'bad signature')
-        try:
-            boot.main(); raise AssertionError('invalid signature executed')
-        except RuntimeError as error:
-            assert 'signature' in str(error)
-        assert not (versions / bad_name).exists()
-        (latest / 'release.sig').write_bytes(saved)
         (latest / 'engine.py').write_text('corrupt payload')
         try:
             boot.main(); raise AssertionError('corrupt payload executed')
         except RuntimeError as error:
             assert 'verification' in str(error)
         assert result.read_text() == '2'
-        print('OK signature and payload corruption stop before execution and preserve the working updater')
+        print('OK payload corruption stops before execution and preserves the working updater')
         # Model a power loss after activation's journal, before READY persisted.
         state = json.loads((root / 'state.json').read_text())
         old_active = state['active']
         state.update(active=bad_name, previous=old_active, pending=True)
         boot.save(root / 'state.json', state)
         latest = root / 'release-3'
-        # Highest authenticated release is four: a replay must stop after recovery.
+        # Highest verified release is four: a replay must stop after recovery.
         try:
             boot.main(); raise AssertionError('metadata rollback accepted')
         except RuntimeError as error:
             assert 'older' in str(error)
         assert json.loads((root / 'state.json').read_text())['active'] == old_active
-        print('OK interrupted activation restores a verified predecessor; authenticated version replay is refused')
+        print('OK interrupted activation restores a verified predecessor; verified version replay is refused')

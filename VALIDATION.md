@@ -1,6 +1,10 @@
 # SimpleOS 0.8 verification
 
-Authenticated bootstrap verification on 2026-10-14 (new ISO architecture):
+Historical signed-bootstrap verification on 2026-10-14 (0.8-r4):
+
+Custom release signing has since been removed. Versioned delivery, activation
+and recovery remain; signature-specific fixtures/assertions were removed from
+the existing tests. The r5 build report records the focused replacement checks.
 
 - The stable launcher, signed/versioned engine and grouped ordinary-source
   transaction are exercised by `update-bootstrap-check.py`,

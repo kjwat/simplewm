@@ -1,9 +1,12 @@
 # Simpleupdate continuation handoff
 
-Updated 2026-10-14. **Updater implementation, publication, integration and the
-one final 0.8-r4 ISO are complete.** The ISO has not been booted or installed.
-The earlier account's `UPDATER-HANDOFF-SESSION-A.md` is preserved as historical
-evidence; its incomplete/conflict warnings describe the original checkpoint.
+Current instruction: remove ONLY custom release signing and private-key
+requirements. Preserve the versioned updater, release delivery, activation,
+fallback, source transactions/rollback, and Debian update/migration behavior.
+The earlier request to remove the architecture was cancelled before any edits.
+Only focused existing checks and a replacement ISO are requested; no new features
+or test infrastructure. The r5 build is in progress. The r4 details below are
+historical and will be superseded by the r5 release report.
 
 ## Final artifacts and published revisions
 
@@ -108,15 +111,14 @@ Limits: no final ISO VM/hardware boot or Calamares disk installation; no real fu
 Debian/Liquorix upgrade. Headless operation does not prove next-login/hardware
 behavior. APT rollback is not provided. No old-r3 bridge is promised.
 
-## Signing-key custody
+## Release preparation after removal
 
-Production private key: `/home/keelan/.local/share/simpleupdate-signing/release-private.pem`
-(owner-only file 0600 in 0700 parent). Never print it, commit it or include it in
-an ISO. Secure backup is needed to preserve future updater signing capability.
-Public key: `updater/release-key.pem`, SHA256 `7a354e11e7f6bb6e3b7cc2f99fae8ce26e94c56b59360aed5a0ce62e89ef139b`.
-For another engine release, commit code, sign a strictly increasing version with
-`updater/release.py`, verify installation, then publish metadata and immutable
-payloads together. `updater/README.md` documents the maintainer workflow.
+No custom signing key or signature is required. Generate metadata with
+`python3 updater/release.py --version N --revision COMMITTED_SHA`, verify the
+staged seed, and publish metadata plus immutable payloads. The version must
+increase; sizes/SHA-256, HTTPS verification and all recovery records remain.
+The old key is no longer required for new images. Historical audit artifacts
+and old ISOs have not been modified.
 
 ## Useful paths
 

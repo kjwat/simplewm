@@ -85,15 +85,10 @@ def read_json(data):
     return json.loads(data, object_pairs_hook=unique)
 
 
-def manifest(directory, key):
+def manifest(directory):
     raw = (directory / 'release.json').read_bytes()
-    if len(raw) > 16384 or (directory / 'release.sig').stat().st_size > 1024:
+    if len(raw) > 16384:
         raise RuntimeError('updater metadata is too large')
-    result = subprocess.run(['/usr/bin/openssl', 'dgst', '-sha256', '-verify', str(key),
-                             '-signature', str(directory / 'release.sig'),
-                             str(directory / 'release.json')], capture_output=True, env=ENV)
-    if result.returncode:
-        raise RuntimeError('updater signature is invalid; no downloaded code was executed')
     data = read_json(raw)
     if (not isinstance(data, dict) or set(data) != {'format', 'version', 'protocol', 'revision', 'files'}
             or data['format'] != 1 or type(data['version']) is not int or data['version'] < 1
@@ -115,8 +110,8 @@ def identifier(value):
     return value
 
 
-def verify_payload(directory, key):
-    metadata, name = manifest(directory, key)
+def verify_payload(directory):
+    metadata, name = manifest(directory)
     for file, expected in metadata['files'].items():
         path = directory / file
         info = path.lstat()
@@ -126,14 +121,14 @@ def verify_payload(directory, key):
     return metadata, name
 
 
-def installed_payload(name, key):
+def installed_payload(name):
     directory = VERSIONS / identifier(name)
     private_directory(directory, create=False)
-    for file in ('release.json', 'release.sig', *FILES):
+    for file in ('release.json', *FILES):
         trusted_file(directory / file)
-    metadata, actual = verify_payload(directory, key)
+    metadata, actual = verify_payload(directory)
     if actual != name:
-        raise RuntimeError('updater version directory does not match its signed metadata')
+        raise RuntimeError('updater version directory does not match its metadata')
     return metadata, actual
 
 
@@ -145,7 +140,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def fetch_child(relative, limit):
     if os.geteuid() == 0:
         raise RuntimeError('updater downloads must run without root privileges')
-    if not re.fullmatch(r'(main/updater/release\.(json|sig)|[0-9a-f]{40}/(updater/[a-z]+\.py|scripts/simpleupdate(-target)?))', relative):
+    if not re.fullmatch(r'(main/updater/release\.json|[0-9a-f]{40}/(updater/[a-z]+\.py|scripts/simpleupdate(-target)?))', relative):
         raise RuntimeError('invalid updater download path')
     request = urllib.request.Request(BASE + relative, headers={'User-Agent': 'SimpleOS-simpleupdate/1'})
     with urllib.request.build_opener(NoRedirect).open(request, timeout=25) as response:
@@ -169,22 +164,21 @@ def download(relative, limit):
     return result.stdout
 
 
-def stage(metadata_dir, metadata, name, key):
+def stage(metadata_dir, metadata, name):
     final = VERSIONS / name
     if final.exists():
-        installed_payload(name, key)
+        installed_payload(name)
         return final
     required = sum(item['size'] for item in metadata['files'].values()) + 16 * 1024 * 1024
     if shutil.disk_usage(VERSIONS).free < required:
         raise RuntimeError('not enough disk space to stage the updater; free space and retry')
     with tempfile.TemporaryDirectory(prefix='.staging-', dir=VERSIONS) as temp:
         incoming = Path(temp) / 'payload'; incoming.mkdir(mode=0o755)
-        for name_in in ('release.json', 'release.sig'):
-            shutil.copyfile(metadata_dir / name_in, incoming / name_in)
+        shutil.copyfile(metadata_dir / 'release.json', incoming / 'release.json')
         for file, source in FILES.items():
             (incoming / file).write_bytes(download(metadata['revision'] + '/' + source,
                                                   metadata['files'][file]['size']))
-        verify_payload(incoming, key)
+        verify_payload(incoming)
         for path in incoming.iterdir():
             path.chmod(0o755 if path.name == 'simpleupdate-target' else 0o644)
             with path.open('rb') as stream:
@@ -254,11 +248,9 @@ def main():
         return 0
     diagnostics = any(arg in args for arg in ('--help', '-h', '--dry-run', '--status'))
     if diagnostics:
-        key = DATA / 'release-key.pem'
         private_directory(DATA, create=False)
-        for file in ('release-key.pem', 'release.json', 'release.sig'):
-            trusted_file(DATA / file)
-        _, seed_name = manifest(DATA, key)
+        trusted_file(DATA / 'release.json')
+        _, seed_name = manifest(DATA)
         state = read_json(STATE.read_bytes()) if STATE.exists() else {'active': seed_name}
         selected = None
         for name in (state.get('active'), state.get('previous'), seed_name):
@@ -266,7 +258,7 @@ def main():
                 continue
             candidate = VERSIONS / identifier(name)
             try:
-                _, actual = installed_payload(name, key)
+                _, actual = installed_payload(name)
                 if actual != name:
                     raise RuntimeError('updater version directory mismatch')
             except (OSError, ValueError, RuntimeError):
@@ -281,10 +273,8 @@ def main():
     os.umask(0o022)
     for directory in (DATA, VERSIONS, STATE.parent, LOCK.parent):
         private_directory(directory)
-    key = DATA / 'release-key.pem'
-    for file in ('release-key.pem', 'release.json', 'release.sig'):
-        trusted_file(DATA / file)
-    seed, seed_name = manifest(DATA, key)
+    trusted_file(DATA / 'release.json')
+    seed, seed_name = manifest(DATA)
     lock_fd = os.open(LOCK, os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
     with os.fdopen(lock_fd, 'a') as lock:
         trusted_file(LOCK)
@@ -312,7 +302,7 @@ def main():
             fallback = state['previous'] or (seed_name if state['active'] != seed_name else None)
             if not fallback:
                 raise RuntimeError(reason + '; no previous updater exists. Recovery media may be needed')
-            installed_payload(fallback, key)
+            installed_payload(fallback)
             state['rejected'] = list(dict.fromkeys([*state['rejected'], state['active']]))
             state.update(active=fallback, previous=None, pending=False)
             save(STATE, state)
@@ -320,15 +310,15 @@ def main():
         if state['pending']:
             restore('Updater activation was interrupted')
         try:
-            installed, _ = installed_payload(state['active'], key)
+            installed, _ = installed_payload(state['active'])
         except (OSError, ValueError, RuntimeError):
             restore('The active updater is damaged')
-            installed, _ = installed_payload(state['active'], key)
+            installed, _ = installed_payload(state['active'])
         previous_requested = '--previous-updater' in args
         if previous_requested:
             args.remove('--previous-updater')
             restore('Previous updater requested')
-            installed, _ = installed_payload(state['active'], key)
+            installed, _ = installed_payload(state['active'])
         # Keep the installed Debian migration authority and its recovery path.
         migration = '--release-upgrade' in args or MIGRATION.exists()
         rollback = '--rollback-sources' in args
@@ -344,12 +334,11 @@ def main():
             say('Checking for updater improvements')
             with tempfile.TemporaryDirectory(prefix='.metadata-', dir=STATE.parent) as temp:
                 metadata_dir = Path(temp)
-                for file, limit in (('release.json', 16384), ('release.sig', 1024)):
-                    (metadata_dir / file).write_bytes(download('main/updater/' + file, limit))
-                metadata, name = manifest(metadata_dir, key)
+                (metadata_dir / 'release.json').write_bytes(download('main/updater/release.json', 16384))
+                metadata, name = manifest(metadata_dir)
                 if metadata['version'] < state['highest']:
-                    raise RuntimeError('updater metadata is older than the newest authenticated release')
-                # A release number identifies exactly one signed payload,
+                    raise RuntimeError('updater metadata is older than the newest verified release')
+                # A release number identifies exactly one verified payload,
                 # including a previously rejected candidate.
                 known = [state['active'], state['previous'], *state['rejected']]
                 if any(value and int(value.split('-', 1)[0]) == metadata['version'] and value != name
@@ -363,7 +352,7 @@ def main():
                     say('Updater version ' + str(metadata['version']) + ' is available' if name != state['active'] else 'Updater is current')
                 elif name != state['active'] and name not in state['rejected']:
                     say(f'Installing updater version {metadata["version"]}')
-                    candidate = stage(metadata_dir, metadata, name, key)
+                    candidate = stage(metadata_dir, metadata, name)
                     try:
                         probe(candidate, metadata['version'])
                     except (RuntimeError, ValueError, subprocess.TimeoutExpired):

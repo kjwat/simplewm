@@ -60,10 +60,10 @@ sudo python3 image/seed-updater.py ROOTFS \
   --payload SUITE_PAYLOAD/usr/local --payload WM_PAYLOAD/usr/local
 ```
 
-This verifies the signed updater and every explicitly packaged file, records
+This verifies the versioned updater and every explicitly packaged file, records
 ownership without adopting unrelated files, and fixes system parent ownership
-and permissions. Keep the signing key outside the image. Publish and verify the
-authenticated updater endpoint before shipping; see `../updater/README.md`.
+and permissions. Publish and verify the HTTPS updater metadata and payloads
+before shipping; see `../updater/README.md`. No signing key is required.
 No updater state or retained test recovery transaction belongs in a fresh ISO.
 
 Finally:
