@@ -18,7 +18,7 @@ On Debian 13:
 
 ```sh
 sudo apt install build-essential pkg-config libwlroots-0.18-dev libwayland-dev \
-  wayland-protocols libxkbcommon-dev libinput-dev libxcb-icccm4-dev
+  wayland-protocols libxkbcommon-dev libinput-dev libxcb-icccm4-dev libcairo2-dev
 make
 sudo make install
 ```
@@ -28,7 +28,8 @@ wl-clipboard wlr-randr wlopm python3 python3-pil`. Simpleterm and Firefox are la
 Programs and assets install exclusively in `/usr/local`. `DESTDIR` permits
 staging; `make uninstall` removes only SimpleWM's own files, preserving user
 configuration. The build produces `build/simplewm`; generated binaries stay
-out of Git.
+out of Git. The native lock client also builds with SimpleWM and installs under
+`/usr/local/bin`, using the distro's Swaylock PAM service.
 
 Start with `simplewm-session` from a text login, or select SimpleWM in a display
 manager that searches `/usr/local/share/wayland-sessions`.
@@ -196,6 +197,26 @@ the Liquorix APT metapackages. Liquorix is unsigned, so Secure Boot must be off
 unless you arrange your own signing.
 
 ## Wallpaper and palette
+
+Super+L, idle locking, and suspend all use `simplewm-lock`. A centered clock
+uses the configured monospace font over a heavily blurred copy of the active
+wallpaper. The desktop palette supplies its colors; a soft tint around the
+clock and entry keeps text readable on bright and dark wallpapers. Wallpaper
+and palette changes apply on the next lock without separate lock settings.
+The first typed character reveals the centered password field and is retained,
+with one `*` per character. Enter verifies, a wrong password briefly shakes the
+field and displays **try again**, and Escape clears the entry and returns to
+the clock. Caps Lock and multiple keyboard layouts are shown while entering
+the password. The session stays locked if the lock client crashes.
+
+The lock client and launcher are part of the normal `make install` payload and
+arrive through ordinary `simpleupdate`, including fresh installs. The updated
+locker works immediately after installation; the compositor's new appearance
+report is used after the next login. An older running compositor uses its
+existing config and palette. The launcher caches only blurred wallpaper images
+under `~/.cache/simplewm/lock`; a missing or unreadable image uses the theme's
+solid background. See [lock/README.md](lock/README.md) for source attribution
+and the offline preview command.
 
 Super+W opens the wallpaper wizard in Simpleterm. Clean installs use Fill.
 You can also run

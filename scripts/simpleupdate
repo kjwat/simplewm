@@ -56,7 +56,7 @@ BUILD_PACKAGES = [
 WM_BUILD_PACKAGES = [
     'build-essential', 'pkg-config', 'git', 'ca-certificates', 'libwlroots-0.18-dev',
     'libwayland-dev', 'wayland-protocols', 'libxkbcommon-dev', 'libinput-dev',
-    'libxcb-icccm4-dev', 'python3-gi', 'gir1.2-gtk-3.0', 'python3-pil',
+    'libxcb-icccm4-dev', 'libcairo2-dev', 'libpam0g', 'python3-gi', 'gir1.2-gtk-3.0', 'python3-pil',
     'swaybg', 'swayidle', 'swaylock', 'wtype', 'grim', 'wl-clipboard', 'xwayland',
     'dbus-x11',
 ]
@@ -663,7 +663,7 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     if verify:
         for check in ('config-check.py', 'update-check.py', 'update-logic-check.py', 'update-plain-check.py',
                       'update-release-check.py', 'update-target-check.py',
-                      'theme-check.py', 'setup-check.py', 'image-check.py'):
+                      'theme-check.py', 'setup-check.py', 'image-check.py', 'lock-check.py'):
             if (source / 'tests' / check).is_file():
                 run(['python3', str(source / 'tests' / check)], **opts)
         run(['dbus-run-session', '--', 'python3', str(source / 'tests/session-check.py')], **opts)
@@ -672,6 +672,13 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
     for name in ('simplewm', 'simplewmctl', 'simplewm-session', 'simpleupdate', 'wallpaper-theme'):
         if not os.access(local / 'bin' / name, os.X_OK):
             raise RuntimeError(f'SimpleWM staging omitted executable {name}')
+    locker = local / 'bin/simplewm-lock-client'
+    if (source / 'lock/main.c').is_file():
+        if not os.access(locker, os.X_OK):
+            raise RuntimeError('SimpleWM staging omitted its lock client')
+        linkage = run(['ldd', str(locker)], capture_output=True, text=True)
+        if 'not found' in linkage.stdout:
+            raise RuntimeError('SimpleWM lock client has missing runtime libraries')
     shutil.copytree(source, local / 'share/simplewm/source',
                     ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'), symlinks=True)
     provenance = f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n'
@@ -1017,6 +1024,11 @@ def install_preflight_wm(local, module):
     result = run(['ldd', str(binary)], capture_output=True, text=True)
     if 'not found' in result.stdout:
         raise RuntimeError('target-built SimpleWM has missing libraries on the upgraded system; installation cancelled')
+    locker = local / 'bin/simplewm-lock-client'
+    if locker.exists():
+        result = run(['ldd', str(locker)], capture_output=True, text=True)
+        if 'not found' in result.stdout:
+            raise RuntimeError('target-built lock client has missing libraries; installation cancelled')
     verify_wm_abi(binary, module)
     run([str(binary), '--check-config', '-c', str(local / 'share/simplewm/config')])
     install_transaction(local, PREFIX)

@@ -81,6 +81,8 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
             children.append(child)
         def active(): return next(c for c in status()['clients'] if c['active'])
         assert len(status()['outputs']) == 2
+        assert status()['appearance']['image'] == ''
+        assert status()['appearance']['font'] == 'Ubuntu Sans Mono 13'
         request('workspace 1'); request('workspace prev')
         assert status()['outputs'][0]['workspace'] == 1
         request('workspace 9'); request('workspace next')

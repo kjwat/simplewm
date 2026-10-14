@@ -1,5 +1,26 @@
 # SimpleOS 0.8 verification
 
+Lock-screen source verification on 2026-10-14:
+
+- Strict C build of the compositor and native lock client, with warnings as errors.
+- `tests/lock-check.py`: effective appearance and older-compositor fallback,
+  contrast on bright/dark/color extremes, private wallpaper-only blur caching,
+  renderer on small outputs, first-key and UTF-8 editing/masks, full password
+  clearing, ignored input during authentication, and staged runtime linkage.
+- Isolated Wayland session with actual virtual-keyboard input, two outputs and
+  mixed scales: production lock readiness, repeated idle/suspend requests,
+  centered clock/entry, Escape, denied compositor actions while locked, and
+  client-crash containment. Rejection and successful UTF-8 unlocking use a
+  separately linked test authentication fixture; real passwords are never used.
+- The unmodified 0.8-r2 updater validates the actual staged installation.
+  Original and current updater regression paths install the new launcher,
+  native lock client and target helper through a plain `simpleupdate` transaction.
+- Native previews use the current wallpaper/palette and the production drawing
+  code. The preview and test authentication fixture are never installed.
+- Password input checks also pass AddressSanitizer and UndefinedBehaviorSanitizer
+  with leak detection enabled. The full existing configuration, theme, setup,
+  image, updater and native/Xwayland desktop regression suites pass.
+
 Source verification on 2026-10-12:
 
 - C build with warnings as errors; config, theme and transaction checks.

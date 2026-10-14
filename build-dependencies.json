@@ -2,9 +2,9 @@
   "packages": [
     "build-essential", "pkg-config", "git", "ca-certificates",
     "libwayland-dev", "wayland-protocols", "libxkbcommon-dev", "libinput-dev",
-    "libxcb-icccm4-dev", "python3-gi", "gir1.2-gtk-3.0", "python3-pil",
+    "libxcb-icccm4-dev", "libcairo2-dev", "libpam0g", "python3-gi", "gir1.2-gtk-3.0", "python3-pil",
     "swaybg", "swayidle", "swaylock", "wtype", "grim", "wl-clipboard",
     "xwayland", "dbus-x11"
   ],
-  "pkg_config": ["wayland-server", "xkbcommon", "libinput", "xcb", "xcb-icccm"]
+  "pkg_config": ["wayland-server", "xkbcommon", "libinput", "xcb", "xcb-icccm", "wayland-client", "cairo"]
 }

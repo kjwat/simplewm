@@ -1,7 +1,262 @@
-#!/bin/sh
-set -eu
-# ext-session-lock keeps the screen locked if the locker crashes.
-exec swaylock --daemonize --color 101313 --font 'Ubuntu Sans' --font-size 16 \
-    --indicator-radius 65 --indicator-thickness 3 --inside-color 101313 \
-    --ring-color 92a58e --key-hl-color d3a175 --text-color e6e7e1 \
-    --show-failed-attempts
+#!/usr/bin/python3
+"""Lock SimpleWM using the current wallpaper, mono font, and desktop palette."""
+from __future__ import annotations
+import argparse
+import fcntl
+import glob
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import socket
+import subprocess
+import sys
+import tempfile
+
+TINT = 199 / 255  # Must match draw_lock_background in lock/ui.c.
+DEFAULTS = {'background': '#101313', 'surface': '#181b1b', 'accent': '#92a58e',
+            'muted': '#a3aba3', 'error': '#eaa08a', 'font': 'Ubuntu Sans Mono 13',
+            'image': '', 'mode': 'fill'}
+
+
+def status():
+    endpoint = os.environ.get('SIMPLEWM_SOCKET')
+    if not endpoint:
+        return {}
+    try:
+        with socket.socket(socket.AF_UNIX) as peer:
+            peer.settimeout(.5)
+            peer.connect(endpoint)
+            peer.sendall(b'status\n')
+            chunks = bytearray()
+            while len(chunks) < 1024 * 1024:
+                part = peer.recv(65536)
+                if not part:
+                    return json.loads(chunks)
+                chunks.extend(part)
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def config_appearance(path: Path):
+    """Compatibility with a compositor started before the lock-screen update."""
+    result, variables = {}, {}
+
+    def expand(value):
+        return re.sub(r'\$[A-Za-z0-9_]+', lambda m: variables.get(m[0], m[0]), value)
+
+    def relative(value, parent):
+        value = Path(value).expanduser()
+        return value if value.is_absolute() else parent / value
+
+    def read(file, depth=0):
+        if depth >= 8:
+            return
+        try:
+            lines = file.read_text().splitlines()
+        except OSError:
+            return
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            try:
+                if line.startswith('set '):
+                    _, name, value = line.split(None, 2)
+                    variables[name] = expand(value)
+                    continue
+                words = shlex.split(expand(line))
+                if '#' in words:
+                    words = words[:words.index('#')]
+            except ValueError:
+                continue
+            if len(words) == 2 and words[0] == 'include':
+                for include in sorted(glob.glob(str(relative(words[1], file.parent)))):
+                    read(Path(include), depth + 1)
+            elif len(words) in (2, 3) and words[0] == 'background':
+                result['image'] = '' if words[1] == 'none' else str(relative(words[1], file.parent))
+                if len(words) == 3:
+                    result['mode'] = words[2]
+            elif len(words) == 2 and words[0] == 'monospace_font':
+                result['font'] = words[1]
+            elif len(words) == 3 and words[0] == 'color':
+                key = {'background': 'background', 'focused': 'accent', 'urgent': 'error'}.get(words[1])
+                if key:
+                    result[key] = words[2]
+    read(path)
+    return result
+
+
+def rgb(value):
+    if not isinstance(value, str) or not re.fullmatch(r'#?[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?', value):
+        raise ValueError('invalid color')
+    value = value.lstrip('#')[:6]
+    return tuple(int(value[i:i+2], 16) for i in (0, 2, 4))
+
+
+def hexcolor(color):
+    return '#{:02x}{:02x}{:02x}'.format(*color)
+
+
+def mix(first, second, amount):
+    return tuple(round(a * (1 - amount) + b * amount) for a, b in zip(first, second))
+
+
+def luminance(color):
+    channels = [v / 255 for v in color]
+    channels = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in channels]
+    return sum(a * b for a, b in zip(channels, (.2126, .7152, .0722)))
+
+
+def contrast(first, second):
+    a, b = sorted((luminance(first), luminance(second)))
+    return (b + .05) / (a + .05)
+
+
+def readable_colors(settings):
+    colors = {}
+    for key in ('background', 'surface', 'accent', 'muted', 'error'):
+        try:
+            colors[key] = rgb(settings.get(key, DEFAULTS[key]))
+        except ValueError:
+            colors[key] = rgb(DEFAULTS[key])
+    bg = colors['background']
+    fg = max(((0, 0, 0), (255, 255, 255)), key=lambda c: contrast(bg, c))
+    extreme = (255, 255, 255) if fg == (255, 255, 255) else (0, 0, 0)
+    endpoint = tuple(255 - c for c in fg)
+    for step in range(101):
+        base = mix(bg, endpoint, step / 100)
+        worst = mix(extreme, base, TINT)
+        if contrast(worst, fg) >= 7:
+            break
+    colors['background'], colors['foreground'] = base, fg
+    # Keep labels readable over any wallpaper pixel and passwords on the field.
+    for key, minimum in (('surface', 7), ('muted', 4.5), ('accent', 3), ('error', 4.5)):
+        original = colors[key]
+        target = endpoint if key == 'surface' else fg
+        for step in range(101):
+            value = mix(original, target, step / 100)
+            against = fg if key == 'surface' else worst
+            if contrast(value, against) >= minimum:
+                break
+        colors[key] = value
+    return {key: hexcolor(color) for key, color in colors.items()}
+
+
+def appearance(config=None, current=None):
+    current = status() if current is None else current
+    config_root = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'simplewm'
+    settings = DEFAULTS.copy()
+    try:
+        palette = json.loads((config_root / 'palette.json').read_text())
+        if isinstance(palette, dict):
+            settings.update({k: v for k, v in palette.items() if k in DEFAULTS and isinstance(v, str)})
+    except (OSError, ValueError):
+        pass
+    selected = Path(config or current.get('config') or config_root / 'config').expanduser()
+    settings.update(config_appearance(selected))
+    # New compositors export successfully applied settings, including later
+    # palette includes. This also ignores unsaved or rejected config changes.
+    active = current.get('appearance', {}) if not config else {}
+    if isinstance(active, dict):
+        settings.update({k: v for k, v in active.items() if k in DEFAULTS and isinstance(v, str)})
+    settings.update(readable_colors(settings))
+    settings['font'] = re.sub(r'\s+\d+(?:\.\d+)?$', '', settings['font']) or 'monospace'
+    if settings['mode'] not in ('fill', 'fit', 'center', 'stretch', 'tile'):
+        settings['mode'] = 'fill'
+    return settings
+
+
+def blurred_wallpaper(image, cache):
+    """Cache the wallpaper only; no application windows or screenshots are read."""
+    if not image:
+        return None
+    try:
+        from PIL import Image, ImageFilter, ImageOps
+        path = Path(image).expanduser().resolve(strict=True)
+        info = path.stat()
+        key = hashlib.sha256(f'blur-v1\0{path}\0{info.st_mtime_ns}\0{info.st_size}'.encode()).hexdigest()
+        cache.mkdir(parents=True, mode=0o700, exist_ok=True)
+        target = cache / (key + '.png')
+        if target.is_file():
+            with Image.open(target) as cached:
+                cached.verify()
+            return target
+        with Image.open(path) as original:
+            if original.width * original.height > 42_000_000:
+                raise ValueError('wallpaper exceeds 42 megapixels')
+            original = ImageOps.exif_transpose(original).convert('RGB')
+            # Preserve pixel dimensions for center/tile; Cairo scales fill/fit
+            # per output, including mixed-resolution and scaled monitors.
+            original = original.filter(ImageFilter.GaussianBlur(max(original.size) * .028))
+            with tempfile.NamedTemporaryFile(dir=cache, suffix='.png', delete=False) as tmp:
+                temporary = Path(tmp.name)
+            try:
+                original.save(temporary, 'PNG')
+                temporary.chmod(0o600)
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        old = sorted(cache.glob('*.png'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
+        for previous in old[4:]:
+            previous.unlink(missing_ok=True)
+        return target
+    except Exception as error:
+        print(f'simplewm-lock: using a solid theme background: {error}', file=sys.stderr)
+        return None
+
+
+def client_path():
+    root = Path(__file__).resolve().parent.parent
+    for path in (root / 'bin/simplewm-lock-client', root / 'build/simplewm-lock-client'):
+        if os.access(path, os.X_OK):
+            return path
+    raise RuntimeError('lock client is missing; build and install SimpleWM')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--foreground', action='store_true', help='stay in the foreground after locking')
+    parser.add_argument('--config', type=Path, help='use this configuration instead of the active desktop settings')
+    args = parser.parse_args()
+    client = client_path()
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/nonexistent'))
+    # Concurrent hotkey/idle/suspend requests wait for actual lock readiness.
+    with (runtime / 'simplewm-lock.guard').open('a') as guard:
+        (runtime / 'simplewm-lock.guard').chmod(0o600)
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        current = status()
+        if current.get('locked') and current.get('lock_client', True):
+            return 0
+        settings = appearance(args.config, current)
+        cache = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'simplewm/lock'
+        image = blurred_wallpaper(settings['image'], cache)
+        command = [str(client), '--font', settings['font'], '--scaling', settings['mode']]
+        for key in ('background', 'foreground', 'surface', 'accent', 'muted', 'error'):
+            command += ['--color' if key == 'background' else '--' + key, settings[key]]
+        if image:
+            command += ['--image', str(image)]
+        if not args.foreground:
+            command += ['--daemonize']
+        read_fd, ready_fd = os.pipe()
+        try:
+            child = subprocess.Popen(command + ['--ready-fd', str(ready_fd)], pass_fds=(ready_fd,))
+        finally:
+            os.close(ready_fd)
+        try:
+            ready = os.read(read_fd, 1) == b'\n'
+        finally:
+            os.close(read_fd)
+        if not ready:
+            return child.wait() or 1
+    return child.wait()
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, RuntimeError) as error:
+        sys.exit(f'simplewm-lock: {error}')

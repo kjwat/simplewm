@@ -89,6 +89,9 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
                 else:
                     (local / 'bin/simplewm').write_text('latest compositor')
                     (local / 'bin/simpleupdate').write_text('latest updater')
+                    (local / 'bin/simplewm-lock').write_text('latest lock launcher')
+                    (local / 'bin/simplewm-lock-client').write_text('latest native lock client')
+                    (local / 'bin/simpleupdate-target').write_text('latest target helper')
                 data = local / 'share' / component; data.mkdir(exist_ok=True, parents=True)
                 (data / 'install-manifest').write_text(f'{component}_source_sha={sha}\n')
                 git('-C', source, 'branch', '-f', 'main', sha)
@@ -153,6 +156,9 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
             assert (prefix / 'share/simplesuite/simpleterm/bashrc').read_text() == 'latest Bash prompt asset'
             assert (prefix / 'bin/simplewm').read_text() == 'latest compositor'
             assert (prefix / 'bin/simpleupdate').read_text() == 'latest updater'
+            assert (prefix / 'bin/simplewm-lock').read_text() == 'latest lock launcher'
+            assert (prefix / 'bin/simplewm-lock-client').read_text() == 'latest native lock client'
+            assert (prefix / 'bin/simpleupdate-target').read_text() == 'latest target helper'
             assert personal.read_text() == 'personal terminal colors'
             assert document.read_text() == 'personal writing'
             assert not any((base / 'tmp').iterdir())

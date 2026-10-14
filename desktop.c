@@ -291,7 +291,14 @@ static void json_string(FILE *out, const char *s)
 static void status_json(FILE *out)
 {
  Monitor *m; Client *c; int first=1;
- fprintf(out,"{\"ok\":true,\"locked\":%s,\"config\":",locked?"true":"false"); json_string(out,config_path);
+ fprintf(out,"{\"ok\":true,\"locked\":%s,\"lock_client\":%s,\"config\":",locked?"true":"false",cur_lock?"true":"false"); json_string(out,config_path);
+ fputs(",\"appearance\":{\"image\":",out); json_string(out,cfg.background);
+ fputs(",\"mode\":",out); json_string(out,cfg.background_mode);
+ fputs(",\"font\":",out); json_string(out,cfg.mono_font);
+ fprintf(out,",\"background\":\"#%02x%02x%02x\",\"accent\":\"#%02x%02x%02x\",\"error\":\"#%02x%02x%02x\"}",
+   (unsigned)lroundf(cfg.background_color[0]*255),(unsigned)lroundf(cfg.background_color[1]*255),(unsigned)lroundf(cfg.background_color[2]*255),
+   (unsigned)lroundf(cfg.focus_color[0]*255),(unsigned)lroundf(cfg.focus_color[1]*255),(unsigned)lroundf(cfg.focus_color[2]*255),
+   (unsigned)lroundf(cfg.urgent_color[0]*255),(unsigned)lroundf(cfg.urgent_color[1]*255),(unsigned)lroundf(cfg.urgent_color[2]*255));
  fputs(",\"outputs\":[",out);
  wl_list_for_each(m,&mons,link) {
   if (!first) fputc(',',out);
