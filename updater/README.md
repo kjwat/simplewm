@@ -83,7 +83,7 @@ uses a test HTTPS release, installs the seed via the Makefile, performs
 actual dependency installation and Suite/WM compilation as root/nobody, and records
 same-request replacement, unchanged repeat, personal-file preservation and
 retained source rollback, failed replacement fallback, interrupted activation,
-offline interrupted source recovery. It also verifies
+and offline interrupted source recovery. It also verifies
 explicit image ownership and a real grouped rebuild. Full Debian/Liquorix
 upgrade is simulated. The test
 uses local HTTPS port 443 while running; its trust roots affect only the copy.

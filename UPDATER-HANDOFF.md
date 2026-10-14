@@ -5,8 +5,14 @@ requirements. Preserve the versioned updater, release delivery, activation,
 fallback, source transactions/rollback, and Debian update/migration behavior.
 The earlier request to remove the architecture was cancelled before any edits.
 Only focused existing checks and a replacement ISO are requested; no new features
-or test infrastructure. The r5 build is in progress. The r4 details below are
-historical and will be superseded by the r5 release report.
+or test infrastructure. The r5 build is complete:
+`/home/keelan/0.8/simpleos-0.8-r5-amd64.iso`
+SHA256: `a9751bef35e362bb51dd808f54278c89ca1c145d5aa06da4c8ffca7f51dcd13c`.
+The report is `/home/keelan/0.8/BUILD-REPORT-r5.md`; source revision is
+`1fe388d1292a6ccdd041ecb32b9857e16715b348`, updater release 3. Bootstrap/seed/release/target checks and
+packaged-image verification passed. Engine, ordinary transactions, migration and
+lock-screen code remain unchanged. No VM/hardware boot or disk installation.
+The r4 details below are historical and superseded by the r5 release report.
 
 ## Final artifacts and published revisions
 

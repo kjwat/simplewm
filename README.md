@@ -152,12 +152,13 @@ executes the plan. HTTPS release detection still needs network access.
 `--check` retains the existing update-checking interface and may refresh APT
 caches and fetch temporary Git sources; it never approves a release upgrade.
 
-New installations start with a small stable launcher and a versioned updater. A normal `simpleupdate` invocation checks for updater
-improvements first. The launcher retrieves release metadata from the official HTTPS repository
+New installations start with a small stable launcher and a versioned updater.
+A normal `simpleupdate` invocation checks for updater improvements first. The
+launcher retrieves release metadata from the official HTTPS repository
 and checks every payload's size and SHA-256; no custom signing key is required.
 Only an initialized replacement can become active; it receives the original
 request after activation is durable. The previous updater and the ISO seed are
-retained for recovery. Ordinary WM installation cannot replace the launcher,
+retained for recovery. Ordinary WM installation cannot replace the launcher or
 active updater with an older bundled version.
 
 Ordinary Suite/WM source retrieval still trusts the official GitHub repositories
