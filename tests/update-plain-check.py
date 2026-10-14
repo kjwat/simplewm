@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the shipped 0.8-r2 updater and today's updater with no CLI arguments.
+"""Run the shipped 0.8-r2/r3 updaters and today's updater with no CLI arguments.
 
 Git histories, manifest decisions, locking, staging and transactions are real.
 APT and compilation use fixtures; every system path points into a private root.
@@ -11,6 +11,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,12 +44,18 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
     latest = git('-C', upstream, 'rev-parse', 'HEAD')
     archived = root / 'simpleupdate-0.8-r2'
     archived.write_text(shipped_source)
-    for name, script in (('original ISO', archived), ('current', repo / 'scripts/simpleupdate')):
+    r3 = root / 'simpleupdate-0.8-r3'
+    r3.write_text(subprocess.check_output(['git', '-C', str(repo), 'show',
+        '4793cbca276a6a5e1155911eb153250083b7e661:scripts/simpleupdate'], text=True))
+    for name, script in (('original 0.8-r2 ISO', archived), ('0.8-r3 ISO', r3),
+                         ('current', repo / 'scripts/simpleupdate')):
         loader = importlib.machinery.SourceFileLoader('plain_update_' + script.name, str(script))
         spec = importlib.util.spec_from_loader(loader.name, loader)
         update = importlib.util.module_from_spec(spec); loader.exec_module(update)
         base = root / (script.name + '-root'); base.mkdir()
         prefix = base / 'local'; (prefix / 'bin').mkdir(parents=True)
+        executable = prefix / 'bin/simpleupdate'
+        executable.write_bytes(script.read_bytes()); executable.chmod(0o755)
         for component in ('simplesuite', 'simplewm'):
             data = prefix / 'share' / component; data.mkdir(parents=True)
             (data / 'install-manifest').write_text(f'{component}_source_sha={installed}\n')
@@ -88,10 +95,10 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
                     asset.parent.mkdir(parents=True); asset.write_text('latest Bash prompt asset')
                 else:
                     (local / 'bin/simplewm').write_text('latest compositor')
-                    (local / 'bin/simpleupdate').write_text('latest updater')
+                    shutil.copy2(repo / 'scripts/simpleupdate', local / 'bin/simpleupdate')
                     (local / 'bin/simplewm-lock').write_text('latest lock launcher')
                     (local / 'bin/simplewm-lock-client').write_text('latest native lock client')
-                    (local / 'bin/simpleupdate-target').write_text('latest target helper')
+                    shutil.copy2(repo / 'scripts/simpleupdate-target', local / 'bin/simpleupdate-target')
                 data = local / 'share' / component; data.mkdir(exist_ok=True, parents=True)
                 (data / 'install-manifest').write_text(f'{component}_source_sha={sha}\n')
                 git('-C', source, 'branch', '-f', 'main', sha)
@@ -110,6 +117,8 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
             if kwargs.get('dir') == '/var/tmp': kwargs['dir'] = str(base / 'tmp')
             return real_mkdtemp(*args, **kwargs)
         for fresh in (True, False):
+            real_run, real_install = update.run, update.install_transaction
+            real_recover = update.recover_transaction
             commands.clear(); builds.clear()
             output = io.StringIO()
             contexts = [
@@ -133,9 +142,9 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
                 patch.object(update, 'install_transaction', side_effect=lambda stage, p=prefix: real_install(stage, p)),
                 contextlib.redirect_stdout(output),
             ]
-            if name == 'current':
+            if hasattr(update, 'debian_release'):
                 # Release detection and APT source validation must also stay
-                # inside this fixture; the archived updater has no such hooks.
+                # inside this fixture; the r2 updater has no such hooks.
                 contexts += [patch.object(update, 'debian_release', return_value=(13, 'trixie')),
                              patch.object(update, 'PENDING_RELEASE', base / 'run/release-upgrade.json'),
                              patch.object(update, 'stable_release', return_value=(13, 'trixie')),
@@ -155,11 +164,21 @@ with tempfile.TemporaryDirectory(prefix='simpleupdate-plain-') as temporary:
             assert (prefix / 'bin/simpleterm').read_text() == 'latest terminal with color fixes'
             assert (prefix / 'share/simplesuite/simpleterm/bashrc').read_text() == 'latest Bash prompt asset'
             assert (prefix / 'bin/simplewm').read_text() == 'latest compositor'
-            assert (prefix / 'bin/simpleupdate').read_text() == 'latest updater'
+            assert executable.read_bytes() == (repo / 'scripts/simpleupdate').read_bytes()
             assert (prefix / 'bin/simplewm-lock').read_text() == 'latest lock launcher'
             assert (prefix / 'bin/simplewm-lock-client').read_text() == 'latest native lock client'
-            assert (prefix / 'bin/simpleupdate-target').read_text() == 'latest target helper'
+            assert (prefix / 'bin/simpleupdate-target').read_bytes() == (repo / 'scripts/simpleupdate-target').read_bytes()
             assert personal.read_text() == 'personal terminal colors'
             assert document.read_text() == 'personal writing'
             assert not any((base / 'tmp').iterdir())
+            if fresh:
+                # The next invocation loads the installed replacement, instead
+                # of retaining the original module in this test process.
+                help_result = subprocess.run([str(executable), '--help'], env=env,
+                    capture_output=True, text=True, check=True, timeout=10)
+                assert '--release-upgrade' in help_result.stdout and '--dry-run' in help_result.stdout
+                loader = importlib.machinery.SourceFileLoader('installed_' + script.name, str(executable))
+                spec = importlib.util.spec_from_loader(loader.name, loader)
+                update = importlib.util.module_from_spec(spec); loader.exec_module(update)
+                assert update.TARGET_HELPER == prefix / 'bin/simpleupdate-target'
         print(f'OK {name} updater: plain simpleupdate updates Debian, Suite, terminal/Bash asset and WM/updater in one invocation; repeat skips builds')

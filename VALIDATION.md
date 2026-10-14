@@ -1,5 +1,56 @@
 # SimpleOS 0.8 verification
 
+Updater self-replacement verification on 2026-10-14:
+
+- The original `simpleos-0.8-r3-amd64.iso` matches its recorded SHA-256:
+  `11532a030dbe37581fd30ce77faec2a67bc6daa12419296b996f1f3b7622800a`.
+  Its extracted updater is byte-identical to SimpleWM revision
+  `4793cbca276a6a5e1155911eb153250083b7e661`; updater SHA-256 is
+  `30efd2a1e729d2c5ad3aecb6cc2d702324ebc0edea0facf097e9d49227519d5f`.
+- `tests/update-iso-check.py` runs that untouched executable with no arguments
+  in a disposable copy of the ISO filesystem. Its manifests, source bundles,
+  package database and original development packages are preserved. Bubblewrap
+  provides private mount/PID/IPC/UTS namespaces and minimal root capabilities;
+  Git, compilation and staging actually run as UID/GID 65534 (`nobody`).
+- The first run installs the newly declared dependencies, including previously
+  absent `libcairo2-dev`, builds SimpleWM revision
+  `48ca08c4ff1418fe8db2931d72ac8ac17e3621c4`, and transactionally installs the
+  new updater, its sibling target helper, and the native locker. The updater
+  SHA-256 becomes
+  `9154d62621ba79893d587534c252224a00e33c16c9f1f35c78c3e651dd00f5d9`.
+  The second ordinary invocation executes that replacement and skips unchanged
+  Suite/WM builds. Both invocations exit successfully; runtime linkage, personal
+  configuration/document preservation and transaction cleanup are checked.
+- Signed APT index refresh and dependency installation, source object/ancestry
+  checks, strict compilation, configuration validation, source bundling and
+  installation are real. Official Git origin configuration stays intact; a
+  test-only command shim substitutes local HTTP source transport to exercise an
+  unpublished commit. Debian/Liquorix full-upgrade is simulated, and daemon
+  startup is disabled in the disposable filesystem. This is an updater test
+  using the original ISO userspace, rather than a new VM boot/installation test.
+- The fast plain-update regression now covers the archived r2 and r3 scripts
+  and today's script, installs the actual replacement updater/helper bytes,
+  then reloads the replacement for the next no-argument run. All updater
+  transaction, decision, release and target-environment suites pass.
+
+To reproduce after extracting `live/filesystem.squashfs` with `unsquashfs`, run
+from this repository (the work directory must not already exist):
+
+```sh
+sudo python3 tests/update-iso-check.py \
+  --rootfs /path/to/original-r3-rootfs \
+  --work-dir /path/to/new-disposable-test \
+  --suite-source /path/to/simplesuite
+```
+
+The harness copies the extraction before writing anything. Its `output/`
+directory retains `first.log`, `repeat.log`, command/credential records and
+`result.json`. Host tools required are Python 3, Git and Bubblewrap; signed APT
+repositories and the official repository identity check require network access.
+The selected WM source is this repository's committed `HEAD`; Suite is pinned
+to the revision recorded in the original ISO so its unchanged-build path is
+also tested.
+
 Lock-screen source verification on 2026-10-14:
 
 - Strict C build of the compositor and native lock client, with warnings as errors.

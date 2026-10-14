@@ -164,13 +164,27 @@ component has a recoverable source-install transaction; a failed build never rea
 installation, and partial installation restores that component's old files.
 Successful earlier components remain updated if a later component fails.
 
-The 0.8-r2 ISO ships published Suite and WM revisions and their Git history.
-Its original updater already fetches the latest official releases and installs
-changed components, including Simpleterm and the updater itself, in one run of
-`simpleupdate`. Reinstalling that ISO follows the same path; no component flags
-or preliminary updater command are needed. A regression test runs the unmodified
-updater shipped in that ISO with no arguments, fresh-install manifests, real Git
-ancestry and installation transactions.
+The 0.8-r2 and 0.8-r3 ISOs ship published Suite and WM revisions and their Git
+history. Their original updaters install changed components, including
+Simpleterm and the updater itself, in one ordinary run of `simpleupdate`.
+No component flags or preliminary updater command are needed.
+
+Self-update belongs to the SimpleWM payload. After the APT phase and Suite
+update, the old updater fetches the official WM revision, checks its objects
+and ancestry, installs its declared build dependencies, and builds it as
+`nobody`. The fetched Makefile stages `scripts/simpleupdate` under
+`/usr/local/bin/simpleupdate`, together with the compositor, locker and updater
+helper. The old updater installs that payload in its recoverable transaction,
+writing the revision manifest last. Its already-loaded Python process finishes
+normally; the next invocation loads the replacement script.
+
+`tests/update-plain-check.py` covers r2, r3 and current updaters with real Git
+history and transactions, then loads the installed replacement for the repeat
+run. `tests/update-iso-check.py` additionally runs the untouched r3 ISO executable
+twice in a copy of its original filesystem, with real root/`nobody` identities,
+APT dependency installation and compilation. Git transport uses local HTTP
+fixtures for unpublished source, and OS full-upgrade is simulated. See
+[VALIDATION.md](VALIDATION.md) for the ISO check and reproduction command.
 
 Simpleterm is built and installed with every changed SimpleSuite release,
 including its Bash prompt asset. Published terminal fixes arrive through the
