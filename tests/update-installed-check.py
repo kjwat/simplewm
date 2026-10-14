@@ -219,6 +219,10 @@ def main():
     run('openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',key,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     key.chmod(0o600)
     run('openssl','pkey','-in',key,'-pubout','-out',source/'updater/release-key.pem',stdout=subprocess.DEVNULL)
+    # Each isolated fixture starts at version 1 even after production metadata
+    # is committed. It uses its own key and never re-signs production metadata.
+    for name in ('release.json', 'release.sig'):
+        (source/'updater'/name).unlink(missing_ok=True)
     git('-C',source,'add','.'); git('-C',source,'commit','--quiet','-m','isolated updater implementation')
     run('python3',source/'updater/release.py','--key',key,'--version','1')
     seed=work/'seed-source'; shutil.copytree(source,seed,ignore=shutil.ignore_patterns('.git','build','__pycache__'))
