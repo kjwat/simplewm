@@ -178,7 +178,7 @@ Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted with
                                 .replace('gtk-cursor-theme-name=Adwaita', 'gtk-cursor-theme-name=Yaru'))
     dconf = root / 'etc/dconf/db/simpleos.d/00-simpleos'
     dconf.write_text(dconf.read_text().replace("gtk-theme='SimpleOS'", "gtk-theme='Yaru-red-dark'")
-                     .replace('Ubuntu Sans Mono 12', 'Ubuntu Sans Mono 13'))
+                     .replace('Ubuntu Sans Mono 13', 'Ubuntu Sans Mono 12'))
     if '[org/gnome/desktop/peripherals/mouse]' not in dconf.read_text():
         with dconf.open('a') as out:
             out.write("\n[org/gnome/desktop/peripherals/mouse]\nspeed=0.0\nnatural-scroll=false\nleft-handed=false\n\n[org/gnome/desktop/peripherals/touchpad]\nspeed=0.0\nnatural-scroll=true\ntap-to-click=true\ndisable-while-typing=true\n")
@@ -187,14 +187,14 @@ Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted with
     cfg = configparser.ConfigParser(interpolation=None)
     cfg.read(term)
     # Font follows the desktop instead of freezing a copied preference.
-    cfg['Text']['font'] = 'Ubuntu Sans Mono 13'
+    cfg['Text']['font'] = 'Ubuntu Sans Mono 12'
     cfg['Text']['custom-font'] = 'false'
     with term.open('w') as out:
         cfg.write(out)
     prepare_shell_aliases(root)
     live_setup = root / 'usr/local/bin/simpleos-live-session-setup'
     live_setup.write_text(live_setup.read_text().replace('installed dwm system', 'installed SimpleWM system')
-                          .replace('-s SimpleOS', '-s Yaru-red-dark').replace('Ubuntu Sans Mono 12', 'Ubuntu Sans Mono 13'))
+                          .replace('-s SimpleOS', '-s Yaru-red-dark').replace('Ubuntu Sans Mono 13', 'Ubuntu Sans Mono 12'))
     wallpaper = root / 'usr/local/bin/simpleos-default-wallpaper'
     wallpaper.write_text(wallpaper.read_text().replace('/usr/share/backgrounds/simpleos/', '/usr/local/share/backgrounds/simpleos/'))
     # The pre-existing battery policy is also a SimpleOS-owned executable.

@@ -8,7 +8,7 @@ from xml.sax.saxutils import escape
 
 root = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
 font = os.environ.get('SIMPLEWM_FONT', 'Ubuntu Sans 11')
-mono = os.environ.get('SIMPLEWM_MONO_FONT', 'Ubuntu Sans Mono 13')
+mono = os.environ.get('SIMPLEWM_MONO_FONT', 'Ubuntu Sans Mono 12')
 theme = os.environ.get('SIMPLEWM_GTK_THEME', 'Yaru-red-dark')
 hint = os.environ.get('SIMPLEWM_FONT_HINTING', 'slight')
 rgba = os.environ.get('SIMPLEWM_FONT_RGBA', 'rgb')
@@ -33,11 +33,24 @@ with settings.with_suffix('.tmp').open('w') as out:
 settings.with_suffix('.tmp').replace(settings)
 conf = root / 'fontconfig/conf.d/65-simplewm.conf'
 conf.parent.mkdir(parents=True, exist_ok=True)
+data = Path(os.environ.get('SIMPLEWM_SYSTEM_DATA_DIR', '/usr/local/share/simplewm'))
+files = sorted((data / 'fonts').glob('*.ttf'))
+selection = ''
+if files:
+    accepted = ''.join(f'<pattern><patelt name="file"><string>{escape(str(path))}</string>'
+                       '</patelt></pattern>' for path in files)
+    rejected = ''.join(f'<pattern><patelt name="family"><string>{family}</string>'
+                       '</patelt></pattern>' for family in ('Ubuntu Sans', 'Ubuntu Sans Mono'))
+    selection = (f'<dir>{escape(str(data / "fonts"))}</dir><selectfont>'
+                 f'<acceptfont>{accepted}</acceptfont><rejectfont>{rejected}</rejectfont>'
+                 '</selectfont>\n')
 conf.write_text(f'''<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<fontconfig><match target="font">
+<fontconfig>{selection}<match target="font">
 <edit name="antialias" mode="assign"><bool>true</bool></edit>
+<edit name="hinting" mode="assign"><bool>{str(hint != 'none').lower()}</bool></edit>
 <edit name="hintstyle" mode="assign"><const>hint{escape(hint)}</const></edit>
+<edit name="autohint" mode="assign"><bool>false</bool></edit>
 <edit name="rgba" mode="assign"><const>{escape(rgba)}</const></edit>
 <edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>
 </match></fontconfig>

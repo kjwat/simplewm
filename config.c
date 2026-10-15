@@ -353,7 +353,7 @@ static Config *read_config(const char *path)
  struct xkb_rule_names names={0};
  c->border=1; c->gap=8; c->outer_gap=12; c->smart_gaps=1; c->cursor_size=24;
  c->repeat_rate=33; c->repeat_delay=500; c->ratio=0.55f;
- strcpy(c->font,"Ubuntu Sans 11"); strcpy(c->mono_font,"Ubuntu Sans Mono 13");
+ strcpy(c->font,"Ubuntu Sans 11"); strcpy(c->mono_font,"Ubuntu Sans Mono 12");
  strcpy(c->theme,"Yaru-red-dark"); strcpy(c->cursor_theme,"Yaru");
  strcpy(c->hinting,"slight"); strcpy(c->rgba,"rgb"); strcpy(c->kb_layout,"us"); strcpy(c->background_mode,"fit");
  cfg_color("101313",c->background_color); cfg_color("343d3b",c->border_color);

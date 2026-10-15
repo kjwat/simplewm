@@ -2,6 +2,7 @@
 """Prepare one editable SimpleWM directory, including on an offline install."""
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,27 @@ def git(path, *args):
     return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c',
         'http.lowSpeedLimit=1', '-c', 'http.lowSpeedTime=5', '-C', str(path), *args],
         check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+
+
+def update_font_default(repo, data):
+    """Adopt the new stock size once, including homes seeded by an older ISO."""
+    if not (data / 'fonts/UbuntuSansMono[wght].ttf').is_file():
+        return
+    state = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'simplewm'
+    stamp = state / 'butterfonts-v1'
+    config = repo / 'config'
+    if stamp.exists() or not config.is_file():
+        return
+    original = config.read_text()
+    updated = re.sub(r'(?m)^([ \t]*monospace_font[ \t]+)["\']Ubuntu Sans Mono 13["\']([ \t]*(?:#.*)?)$',
+                     r'\1"Ubuntu Sans Mono 12"\2', original)
+    state.mkdir(parents=True, exist_ok=True)
+    if updated != original:
+        backup = state / 'config-before-butterfonts'
+        if not backup.exists():
+            backup.write_text(original)
+        config.write_text(updated)
+    stamp.write_text('Ubuntu Sans Mono 12 at 104 DPI\n')
 
 
 def setup():
@@ -41,6 +63,7 @@ def setup():
     if config.is_symlink():
         if config.resolve() != repo.resolve():
             raise RuntimeError(f'{config} already links elsewhere; preserved')
+        update_font_default(repo, data)
         return
     if config.exists() and not config.is_dir():
         raise RuntimeError(f'{config} is not a directory; preserved')
@@ -92,6 +115,7 @@ def setup():
             if content is None: path.unlink(missing_ok=True)
             else: path.write_bytes(content)
         raise
+    update_font_default(repo, data)
     print(f'Settings: {repo}/config; {config} points to that same directory.')
     print(f'Previous settings preserved in {backup}')
 

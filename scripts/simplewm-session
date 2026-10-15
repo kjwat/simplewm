@@ -5,6 +5,7 @@ export XDG_CURRENT_DESKTOP=SimpleWM XDG_SESSION_DESKTOP=simplewm DESKTOP_SESSION
 export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1 QT_QPA_PLATFORM='wayland;xcb'
 export QT_QPA_PLATFORMTHEME=gtk3 _JAVA_AWT_WM_NONREPARENTING=1
 export BROWSER=firefox-esr TERMINAL=simpleterm
+export GDK_DPI_SCALE=1.0833333333333333
 export XCURSOR_PATH="${XCURSOR_PATH:-$HOME/.icons}:/usr/local/share/icons:/usr/share/icons:/usr/share/pixmaps"
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"

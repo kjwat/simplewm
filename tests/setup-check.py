@@ -43,4 +43,23 @@ with tempfile.TemporaryDirectory() as tmp:
     clean = subprocess.run(['git', '-C', str(fresh / 'simplewm'), 'status', '--porcelain'],
                            check=True, capture_output=True, text=True)
     assert clean.stdout == ''
+    # A fresh install from an older ISO still has the old 13-point default.
+    # The newly installed WM assets adopt 12 once, preserving personal edits.
+    (data / 'fonts').mkdir()
+    (data / 'fonts/UbuntuSansMono[wght].ttf').write_bytes(b'asset-present')
+    legacy = (repo / 'config').read_text() + 'monospace_font "Ubuntu Sans Mono 13" # stock size\n'
+    (repo / 'config').write_text(legacy)
+    subprocess.run(['python3', str(script)], env=env, check=True)
+    assert (repo / 'config').read_text() == legacy.replace('Mono 13', 'Mono 12')
+    assert (home / '.state/simplewm/config-before-butterfonts').read_text() == legacy
+    # A later intentional choice of 13 must remain a user choice.
+    (repo / 'config').write_text(legacy)
+    subprocess.run(['python3', str(script)], env=env, check=True)
+    assert (repo / 'config').read_text() == legacy
+    # Other font families and sizes are preserved on the first updated login.
+    custom = fresh / 'simplewm/config'
+    custom.write_text(custom.read_text() + 'monospace_font "My preferred mono 17"\n')
+    before = custom.read_bytes()
+    subprocess.run(['python3', str(script)], env=fresh_env, check=True)
+    assert custom.read_bytes() == before
 print('OK offline source setup, merged personal config, shared edits, backup and repeat setup')

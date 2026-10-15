@@ -38,6 +38,7 @@ $(BUILD)/simplewm-lock-preview: lock/preview.c lock/ui.c lock/background-image.c
 	$(CC) -Ilock/include -D_POSIX_C_SOURCE=200809L $(CFLAGS) $(shell $(PKG_CONFIG) --cflags $(LOCK_PKGS)) lock/preview.c lock/ui.c lock/background-image.c lock/cairo.c lock/log.c $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(LOCK_PKGS)) -lm -o $@
 lock-preview: $(BUILD)/simplewm-lock-preview
 install: all
+	$(MAKE) install-fonts
 	install -Dm755 $(BUILD)/simplewm $(DESTDIR)$(PREFIX)/bin/simplewm
 	install -Dm755 $(BUILD)/simplewm-lock-client $(DESTDIR)$(PREFIX)/bin/simplewm-lock-client
 	install -Dm644 config $(DESTDIR)$(PREFIX)/share/simplewm/config
@@ -55,6 +56,9 @@ install: all
 	ln -sfn wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme.sh
 	install -d $(DESTDIR)$(PREFIX)/share/applications
 	install -m644 applications/*.desktop $(DESTDIR)$(PREFIX)/share/applications/
+install-fonts:
+	install -d $(DESTDIR)$(PREFIX)/share/simplewm/fonts
+	install -m644 fonts/*.ttf fonts/LICENCE.txt fonts/SHA256SUMS fonts/README.md $(DESTDIR)$(PREFIX)/share/simplewm/fonts/
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/simplewm $(DESTDIR)$(PREFIX)/bin/simplewmctl $(DESTDIR)$(PREFIX)/bin/simpleupdate $(addprefix $(DESTDIR)$(PREFIX)/bin/,$(notdir $(wildcard scripts/simplewm-*)))
 	rm -rf $(DESTDIR)$(PREFIX)/share/simplewm $(DESTDIR)$(PREFIX)/share/doc/simplewm
@@ -64,4 +68,4 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/simpleupdate-target $(DESTDIR)$(PREFIX)/bin/simplewm-lock-client
 clean:
 	rm -rf $(BUILD)
-.PHONY: all install uninstall clean lock-preview
+.PHONY: all install install-fonts uninstall clean lock-preview

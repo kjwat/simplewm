@@ -19,7 +19,7 @@ color focused #92a58e
 color urgent #d3a175
 background /usr/local/share/backgrounds/simpleos/simpleos-background.png fill
 font "Ubuntu Sans 11"
-monospace_font "Ubuntu Sans Mono 13"
+monospace_font "Ubuntu Sans Mono 12"
 font_hinting slight
 font_rgba rgb
 gtk_theme Yaru-red-dark

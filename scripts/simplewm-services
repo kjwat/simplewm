@@ -2,9 +2,9 @@
 set -u
 dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY SIMPLEWM_SOCKET \
     XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION \
-    XCURSOR_THEME XCURSOR_SIZE MOZ_ENABLE_WAYLAND 2>/dev/null || true
+    XCURSOR_THEME XCURSOR_SIZE MOZ_ENABLE_WAYLAND GDK_DPI_SCALE 2>/dev/null || true
 systemctl --user import-environment WAYLAND_DISPLAY DISPLAY SIMPLEWM_SOCKET \
-    XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION 2>/dev/null || true
+    XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION GDK_DPI_SCALE 2>/dev/null || true
 systemctl --user start --no-block pipewire.socket pipewire-pulse.socket wireplumber.service 2>/dev/null || true
 gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1 || true
 for agent in /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \

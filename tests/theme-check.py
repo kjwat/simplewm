@@ -3,6 +3,7 @@ import configparser
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from PIL import Image
 
@@ -53,3 +54,4 @@ with tempfile.TemporaryDirectory(prefix='simplewm-theme-') as temp:
     assert gtk.read_text()=='/* personal CSS */\n'
     assert not (cfg / 'simplewm/palette.conf').exists()
 print('OK wallpaper palette, Unicode/spaced paths, font preservation, existing GTK/Firefox config preservation, and rollback')
+subprocess.run([sys.executable, str(source / 'tests/fonts-check.py')], check=True)

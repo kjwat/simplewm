@@ -1,5 +1,20 @@
 # SimpleOS 0.8 verification
 
+Font defaults verified on 2026-10-15:
+
+- The normal Makefile installation stages all four unmodified Ubuntu 1.006
+  variable font files, their recorded SHA-256 checksums and Ubuntu Font Licence.
+- Real Fontconfig matching selects the staged files for regular, bold, italic
+  and bold italic despite newer Ubuntu fonts on the host. Unrelated families
+  remain available; slight hinting and RGB antialiasing are retained.
+- Real GTK/VTE measurements at 104 DPI give 10 by 22 pixel character cells for
+  Ubuntu Sans Mono 12 at normal zoom, matching the approved 13-point test at
+  zoom 96/104. Simpleterm requires no application changes.
+- The C build, 22 configuration cases, theme/font checks, image defaults,
+  offline setup and existing ordinary-update/seed checks pass. Setup checks
+  include adopting the old stock 13-point size once, keeping its backup and
+  preserving custom or later intentional font choices.
+
 Historical signed-bootstrap verification on 2026-10-14 (0.8-r4):
 
 Custom release signing has since been removed. Versioned delivery, activation

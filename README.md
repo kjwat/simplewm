@@ -60,6 +60,14 @@ spaces and `~/`; `background none` uses the configured background color.
 Toolkit settings are applied to GTK and Fontconfig by a short-lived helper;
 applications may require reopening for some font/theme changes.
 
+SimpleWM ships the captured Ubuntu Sans and Ubuntu Sans Mono 1.006 font files.
+The session uses 104 DPI, slight hinting and RGB antialiasing; the default
+terminal font is Ubuntu Sans Mono 12, matching the size of 13 points at 96 DPI.
+The fonts and settings install with an ordinary `simpleupdate`, including on
+fresh SimpleOS installations. Log out and back in afterward. Existing stock
+13-point terminal settings move to 12 once, with the old config saved in
+`~/.local/state/simplewm/config-before-butterfonts`; other font choices stay as set.
+
 `simplewmctl status` reports JSON with displays, layout, focused client,
 workspaces, and window geometry. Other commands use the same actions as
 `bindsym`, for example `simplewmctl workspace 2` or `simplewmctl maximize`.
