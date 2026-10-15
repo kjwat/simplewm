@@ -147,15 +147,21 @@ def strip_bootstrap(local):
 
 
 def run(update, args, log, version):
-    update.QUIET = not args.verbose
+    # Preserve an interrupted operation's record if its recovery needs repair.
     recover(update)
+    update.QUIET = not args.verbose
     state = {'format': 1, 'phase': 'not-started', 'updater': version,
              'request': {key: str(value) if isinstance(value, Path) else value
                          for key, value in vars(args).items()},
              'components': {}, 'apt_rollback': False}
     work = None
-    persist(state, 'not-started')
+    completed = False
+    progress = update.Progress()
+    update.PROGRESS = progress
     try:
+        progress.start()
+        progress.step(1, 'Checking system and repositories')
+        persist(state, 'not-started')
         space(update.PREFIX, 256 * 1024 * 1024)
         space(Path('/var'), 512 * 1024 * 1024)
         if not args.os_only:
@@ -178,6 +184,7 @@ def run(update, args, log, version):
         home = work / 'home'; home.mkdir(); os.chown(home, uid, gid)
         env = update.safe_environment(home); demote = update.as_user(uid, gid)
         persist(state, 'downloading', component='sources')
+        progress.step(2, 'Checking SimpleSuite and SimpleWM sources')
         plans = source_plan(update, args, work, env, demote, uid, gid, version)
         state['components'] = {p['component']: p['sha'] for p in plans}
         persist(state, 'verified')
@@ -186,6 +193,7 @@ def run(update, args, log, version):
             if full:
                 update.run(['apt-get', '-s', 'full-upgrade'])
             persist(state, 'completed', check_only=True)
+            completed = True
             update.say('Update check completed; no packages or source components installed')
             return
         packages = []
@@ -206,23 +214,27 @@ def run(update, args, log, version):
         # APT checks/reserves its own archive space. Download every requested
         # package before beginning non-atomic package installation.
         persist(state, 'downloading', component='APT')
+        progress.step(3, 'Downloading packages')
         if commands:
             audit = update.run(['dpkg', '--audit'], capture_output=True, text=True).stdout.strip()
             if audit:
                 raise RecoveryRequired('dpkg reports unfinished work; run sudo dpkg --configure -a and sudo apt-get -f install before retrying')
         for command in commands:
             update.run([command[0], '--download-only', *command[1:]])
+        progress.step(4, 'Installing Debian packages and build dependencies')
         for command in commands:
             persist(state, 'installing', component='APT')
             update.run(command)
             persist(state, 'verified', component='APT')
         with tempfile.TemporaryDirectory(prefix='simpleupdate-captured-', dir='/var/tmp') as captured:
             stages = []
+            progress.step(5, 'Building and checking programs' if plans else 'Programs are current')
             for index, plan in enumerate(plans):
                 if plan['component'] == 'SimpleWM':
                     plan['env']['SIMPLEUPDATE_WM_PKGS'] = ' '.join(update.wm_pkg_config(wm_packages, modules))
                 persist(state, 'staged', component=plan['component'])
-                update.say('Building and checking ' + plan['component'])
+                progress.label = 'Building and checking ' + plan['component']
+                update.say(progress.label)
                 stage = build(update, plan, work, env, demote, uid, gid)
                 local = Path(captured) / str(index)
                 transaction.freeze(stage, local)
@@ -233,17 +245,22 @@ def run(update, args, log, version):
                 if update.installed_revision(manifest, key) != plan['sha']:
                     raise RuntimeError('Staged component provenance does not match the requested source')
                 stages.append(local)
+            progress.step(6, 'Backing up and installing programs' if stages else 'No programs to install')
             if stages:
                 persist(state, 'installing', component='sources')
                 def verify():
+                    progress.step(7, 'Verifying installation')
                     for plan in plans:
                         key = plan['component'].lower() + '_source_sha'
                         manifest = update.PREFIX / 'share' / plan['component'].lower() / 'install-manifest'
                         if update.installed_revision(manifest, key) != plan['sha']:
                             raise RuntimeError('Installed component provenance does not match its staged payload')
-                transaction.Transaction(update.PREFIX).install(stages, verify, update.say)
+                transaction.Transaction(update.PREFIX).install(stages, verify, update.say, progress.files)
+            else:
+                progress.step(7, 'Finishing update')
         reboot = REBOOT.exists()
         persist(state, 'awaiting-reboot' if reboot else 'completed', component='all', reboot_required=reboot)
+        completed = True
         update.say('Update completed' + ('; reboot required' if reboot else ''))
         if any(plan['component'] == 'SimpleWM' for plan in plans):
             update.say('SimpleWM passed an isolated startup check; use it at your next login. '
@@ -253,6 +270,8 @@ def run(update, args, log, version):
                 error=str(error))
         raise
     finally:
+        progress.close(success=completed)
+        update.PROGRESS = None
         update.QUIET = False
         if work is not None:
             shutil.rmtree(work, ignore_errors=True)

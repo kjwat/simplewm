@@ -30,6 +30,19 @@ interrupted. Unknown files are not adopted. Personal homes are outside the
 installation transaction. The root-owned ownership inventory is
 `/usr/local/share/simpleupdate/owned.json`.
 
+An already-owned program can be rebuilt or installed locally without blocking
+the next update. Its current bytes are backed up before replacement, and both
+failed-install recovery and `--rollback-sources` restore that exact local build.
+Unmanaged conflicting programs still stop installation, and locally modified
+Suite/WM data and configuration files are preserved.
+
+Ordinary updates display a filling seven-phase progress bar, elapsed time and
+the latest command activity. A heartbeat keeps the bar animated even while a
+compiler or download produces no output. The bar measures completed phases,
+not an estimated completion time. Installation also shows file counts. Pipes
+receive plain progress lines, and transcripts retain full command output without
+terminal control sequences. `--verbose` additionally prints command output live.
+
 ## Maintainer release
 
 No private key or signature is required. No tool publishes code automatically.
@@ -76,6 +89,11 @@ that replacing the script changes an old interpreter already in flight.
 Fast checks: `tests/update-bootstrap-check.py`, `update-durable-check.py`,
 `update-ordinary-check.py`, and `update-seed-check.py`. Preserve and run the
 existing migration/target tests unchanged.
+`tests/update-progress-check.py` checks the live bar through a real terminal PTY.
+`tests/update-handoff-check.py` starts with the shipped 0.8-r5 release-3 bootstrap
+and checks that one plain invocation activates the new engine and completes the
+ordinary update. APT and compilation are fixtures; activation and file replacement
+are real. The bootstrap protocol and payload filenames remain unchanged.
 
 `tests/update-installed-check.py --rootfs CACHED_ISO_ROOT --work-dir NEW_DIR`
 requires administrator authentication and Bubblewrap. It copies the rootfs,

@@ -215,7 +215,7 @@ class Transaction:
         self.restore(state)
         self.recover()
 
-    def install(self, stages, verify, say=print):
+    def install(self, stages, verify, say=print, progress=lambda *args: None):
         self.recover()
         if not self.ownership.is_file() or self.ownership.is_symlink():
             raise RuntimeError('packaged-file inventory is missing; ordinary source installation is blocked')
@@ -239,7 +239,12 @@ class Transaction:
                         if text.startswith(('share/simplewm/', 'share/simplesuite/')):
                             say('Preserving locally modified file: ' + str(target))
                             continue
-                        raise RuntimeError('unmanaged or locally modified program conflicts with update: ' + str(target))
+                        if text not in owned:
+                            raise RuntimeError('unmanaged program conflicts with update: ' + str(target))
+                        # The inventory owns the path, not just one build's
+                        # bytes. Local rebuilds are backed up by this same
+                        # transaction and restored on failure or source rollback.
+                        say('Replacing locally rebuilt program (backup retained): ' + str(target))
                     if (incoming / path).exists() or (incoming / path).is_symlink():
                         raise RuntimeError('components have overlapping install paths: ' + text)
                     parents(incoming, path); copy_file(captured / path, incoming / path)
@@ -255,12 +260,14 @@ class Transaction:
             size += sum((self.prefix / item['path']).lstat().st_size for item in state['files'] if item['before'])
             if shutil.disk_usage(self.prefix).free < size + RESERVE:
                 raise RuntimeError('not enough disk space for installation and recovery copies')
-            for item in state['files']:
+            count = len(state['files'])
+            for index, item in enumerate(state['files'], 1):
                 path = relative(item['path'])
                 if item['before'] is not None:
                     parents(old, path); copy_file(self.prefix / path, old / path)
                     if fingerprint(old / path) != item['before']:
                         raise RuntimeError('installed file changed while preparing its backup')
+                progress('Backing up', index, count)
             # All payloads, backups and directory entries precede installing.
             for directory in sorted([incoming, old, *incoming.rglob('*'), *old.rglob('*')], reverse=True):
                 if directory.is_dir() and not directory.is_symlink():
@@ -268,13 +275,14 @@ class Transaction:
             state['files'].sort(key=lambda item: (item['path'].endswith('/install-manifest'), item['path']))
             self.journal(state)
             state['status'] = 'installing'; self.journal(state)
-            for item in state['files']:
+            for index, item in enumerate(state['files'], 1):
                 path = relative(item['path'])
                 target = self.prefix / path
                 if fingerprint(target) != item['before']:
                     raise RuntimeError('installed file changed during installation: ' + str(target))
                 os.replace(incoming / path, target)
                 sync(target.parent); sync((incoming / path).parent)
+                progress('Installing', index, count)
             for item in state['files']:
                 if fingerprint(self.prefix / item['path']) != item['after']:
                     raise RuntimeError('installed file failed verification: ' + item['path'])
@@ -284,3 +292,4 @@ class Transaction:
             self.recover()
             raise
         self.retain()
+        say('Previous programs retained in ' + str(self.retained / 'old'))

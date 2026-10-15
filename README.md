@@ -181,15 +181,17 @@ Both changed source components are built before either is installed. Their
 payloads, ownership inventory and provenance records form one durable
 transaction. Interrupted source installation is recovered before network
 access on the next ordinary invocation. Locally edited shared configuration
-and unrelated files are preserved; conflicts with locally modified programs
-stop installation. The last successful source transaction is retained.
+and unrelated files are preserved. Locally rebuilt managed programs are backed
+up and replaced normally; conflicting unmanaged programs stop installation.
+The last successful source transaction is retained, including local builds.
 
 `simpleupdate --status` shows the last ordinary operation. Use
 `simpleupdate --rollback-sources` from a console to restore the previous Suite/WM
 files if the new session fails on your hardware. This works offline and does
 not roll back Debian packages. `simpleupdate --previous-updater` selects the
 previous verified updater and continues the request. Downloads and builds are
-quiet by default; `--verbose` shows their output, and transcripts remain in
+shown with a filling progress bar, elapsed time and current activity by default;
+`--verbose` also shows full output, and transcripts remain in
 `/var/log/simpleupdate`.
 
 APT remains non-atomic. Package downloads precede installation, but a package
@@ -199,7 +201,11 @@ major upgrades and pending major-upgrade recovery retain their existing
 implementation and sequence. A headless startup check cannot guarantee the
 next hardware-backed login.
 
-This bootstrap is established by the next ISO. The archived r2/r3 updater tests
+The 0.8-r5 bootstrap installs the newer updater and continues the original
+request in the same invocation; run `simpleupdate` normally after installation.
+`tests/update-handoff-check.py` exercises that shipped bootstrap against the
+real new engine and source transaction, including a locally rebuilt program.
+The archived r2/r3 updater tests
 remain historical regression evidence; they do not establish a same-invocation
 handoff from an already-running old Python script. Release and image assembly
 instructions are in [updater/README.md](updater/README.md).

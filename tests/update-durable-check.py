@@ -79,3 +79,44 @@ else:t.recover()
         assert 'link' in str(error)
     assert (prefix / 'bin/a').read_text() == 'old'
     print('OK escaping staging link rejected without changing installed programs')
+
+with tempfile.TemporaryDirectory(prefix='rebuilt-update-') as temp:
+    base = Path(temp); prefix = base / 'local'; stage = base / 'stage'
+    for root in (prefix, stage):
+        (root / 'bin').mkdir(parents=True)
+        (root / 'bin/simplepdf-mobi').write_text('packaged build')
+    (prefix / 'share/simpleupdate').mkdir(parents=True)
+    record = prefix / 'share/simpleupdate/owned.json'
+    tx.write_json(record, tx.inventory(prefix))
+    original_inventory = record.read_bytes()
+    (prefix / 'bin/simplepdf-mobi').write_text('local rebuild')
+    (stage / 'bin/simplepdf-mobi').write_text('new upstream build')
+    transaction = tx.Transaction(prefix)
+    def failed_verification():
+        raise RuntimeError('injected verification failure')
+    try:
+        transaction.install([stage], failed_verification)
+        raise AssertionError('verification failure was ignored')
+    except RuntimeError as error:
+        assert 'verification failure' in str(error)
+    assert (prefix / 'bin/simplepdf-mobi').read_text() == 'local rebuild'
+    assert record.read_bytes() == original_inventory
+    transaction.install([stage], lambda: None)
+    assert (prefix / 'bin/simplepdf-mobi').read_text() == 'new upstream build'
+    assert (transaction.retained / 'old/bin/simplepdf-mobi').read_text() == 'local rebuild'
+    assert json.loads(record.read_text())['bin/simplepdf-mobi'] == tx.fingerprint(prefix / 'bin/simplepdf-mobi')
+    transaction.rollback()
+    assert (prefix / 'bin/simplepdf-mobi').read_text() == 'local rebuild'
+    assert record.read_bytes() == original_inventory
+    # Unknown personal programs still cannot be adopted just because an update
+    # happens to ship the same filename.
+    (prefix / 'bin/personal-tool').write_text('personal')
+    (stage / 'bin/personal-tool').write_text('upstream')
+    try:
+        transaction.install([stage], lambda: None)
+        raise AssertionError('unmanaged program was overwritten')
+    except RuntimeError as error:
+        assert 'unmanaged program' in str(error)
+    assert (prefix / 'bin/personal-tool').read_text() == 'personal'
+    assert (prefix / 'bin/simplepdf-mobi').read_text() == 'local rebuild'
+    print('OK local rebuilds update with backups, failed verification/rollback restore their exact bytes, unknown programs stay protected')

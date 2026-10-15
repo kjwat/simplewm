@@ -28,6 +28,7 @@ LOG_STREAM = None
 # and standalone legacy callers continue through the original branches below.
 ORDINARY_UPDATE = None
 QUIET = False
+PROGRESS = None
 MANIFEST = PREFIX / 'share/simplesuite/install-manifest'
 WM_MANIFEST = PREFIX / 'share/simplewm/install-manifest'
 WM_SOURCE = PREFIX / 'share/simplewm/source'
@@ -65,11 +66,107 @@ WM_BUILD_PACKAGES = [
     'dbus-x11',
 ]
 
+class Progress:
+    """A phase bar with a heartbeat, including while a child command is silent.
+
+    SIGALRM only writes to the terminal FD; no renderer thread is present when
+    source commands fork and drop privileges through preexec_fn.
+    """
+    def __init__(self):
+        self.stream = sys.stdout
+        self.tty = self.stream.isatty()
+        try:
+            self.fd = self.stream.fileno()
+        except (AttributeError, OSError):
+            self.fd = None
+        self.started = time.monotonic()
+        self.last = 0
+        self.phase = 0
+        self.total = 7
+        self.label = 'Preparing update'
+        self.detail = ''
+        self.fraction = 0
+        self.paused = False
+        self.handler = None
+
+    def start(self):
+        # Do not take over a timer owned by an embedding caller.
+        if self.fd is not None and signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0):
+            self.handler = signal.getsignal(signal.SIGALRM)
+            signal.signal(signal.SIGALRM, lambda *_: self.draw())
+            signal.setitimer(signal.ITIMER_REAL, 0.2, 0.2)
+
+    def clear(self):
+        self.paused = True
+        if self.tty and self.fd is not None:
+            os.write(self.fd, b'\r\x1b[K')
+
+    def resume(self):
+        self.paused = False
+        self.draw(force=self.tty)
+
+    def step(self, phase, label):
+        self.phase, self.label = phase, label
+        self.detail, self.fraction = '', 0
+        say(f'[{phase}/{self.total}] {label}')
+
+    def activity(self, line):
+        clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', line)
+        self.detail = ''.join(c for c in clean.strip() if c.isprintable())[-160:]
+
+    def files(self, label, done, total):
+        self.detail = f'{label}: {done}/{total} files'
+        # Backup and replacement each account for half the installation phase.
+        self.fraction = (0.5 if label == 'Installing' else 0) + (0.5 * done / total if total else 0)
+        self.draw()
+
+    def draw(self, force=False):
+        if self.paused or self.fd is None or not self.phase:
+            return
+        now = time.monotonic()
+        if not force and now - self.last < (0.2 if self.tty else 10):
+            return
+        self.last = now
+        elapsed = int(now - self.started)
+        complete = min(1, (self.phase - 1 + self.fraction) / self.total)
+        width = 24
+        filled = int(width * complete)
+        bar = '#' * filled + '-' * (width - filled)
+        pulse = '|/-\\'[int((now - self.started) * 5) % 4] if complete < 1 else ' '
+        text = (f'simpleupdate: [{bar}] {self.phase}/{self.total} {pulse} '
+                f'{elapsed // 60}:{elapsed % 60:02d} {self.label}')
+        if self.detail:
+            text += ' - ' + self.detail
+        if self.tty:
+            columns = shutil.get_terminal_size((80, 24)).columns
+            text = '\r\x1b[K' + text[:max(1, columns - 1)]
+        else:
+            text += '\n'
+        os.write(self.fd, text.encode('utf-8', errors='replace'))
+
+    def close(self, success=False):
+        if self.handler is not None:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, self.handler)
+            self.handler = None
+        if success:
+            self.phase, self.fraction, self.label, self.detail = self.total, 1, 'Completed', ''
+            self.draw(force=True)
+            if self.tty and self.fd is not None:
+                os.write(self.fd, b'\n')
+        else:
+            self.clear()
+
+
 def say(message):
+    if PROGRESS is not None:
+        PROGRESS.clear()
     print(f'simpleupdate: {message}', flush=True)
     if LOG_STREAM is not None and not LOG_STREAM.closed:
         LOG_STREAM.write(f'simpleupdate: {message}\n')
         LOG_STREAM.flush()
+    if PROGRESS is not None:
+        PROGRESS.resume()
 
 def run(args, **kwargs):
     interactive = kwargs.pop('interactive', False)
@@ -82,8 +179,14 @@ def run(args, **kwargs):
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, errors='replace', **kwargs)
         for line in process.stdout:
+            if PROGRESS is not None:
+                PROGRESS.activity(line)
             if not QUIET:
+                if PROGRESS is not None:
+                    PROGRESS.clear()
                 print(line, end='', flush=True)
+                if PROGRESS is not None:
+                    PROGRESS.resume()
             LOG_STREAM.write(line)
             LOG_STREAM.flush()
         code = process.wait()
