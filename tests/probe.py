@@ -17,6 +17,12 @@ if len(sys.argv) > 2:
             out.write(f'{event.keyval} {event.state}\n')
         return False
     window.connect('key-press-event', record)
+    if '--releases' in sys.argv[3:]:
+        def record_release(widget, event):
+            with open(sys.argv[2], 'a') as out:
+                out.write(f'release {event.keyval} {event.state}\n')
+            return False
+        window.connect('key-release-event', record_release)
 window.connect('destroy', Gtk.main_quit)
 window.show_all()
 Gtk.main()

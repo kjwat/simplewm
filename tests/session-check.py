@@ -113,6 +113,52 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         dialog.terminate(); parent.terminate()
         dialog.wait(timeout=5); parent.wait(timeout=5)
         wait_for(lambda: not status()['clients'], 'portal probes closed')
+        # A page key can reach the kernel just before Super. Rescue that chord,
+        # but preserve bare taps, held paging, and key ordering in applications.
+        keylog = root / 'page-events'
+        paging = subprocess.Popen(['python3', str(source / 'tests/probe.py'),
+                                  'Paging probe', str(keylog), '--releases'],
+                                 env=env, stdout=log, stderr=log)
+        children.append(paging)
+        wait_for(lambda: any(c['title'] == 'Paging probe' for c in status()['clients']),
+                 'paging probe mapped')
+        def workspace():
+            return next(o['workspace'] for o in status()['outputs'] if o['active'])
+        def page_events():
+            lines = keylog.read_text().splitlines() if keylog.exists() else []
+            return [line for line in lines if line.split()[0] in ('65365', '65366') or
+                    (line.startswith('release ') and line.split()[1] in ('65365', '65366'))]
+        for gap in ('0', '5', '15'):
+            delay = ('-s', gap) if gap != '0' else ()
+            for shortcut, initial, expected in (('Page_Down', 1, 2), ('Page_Up', 2, 1)):
+                request(f'workspace {initial}')
+                key('-P', shortcut, *delay, '-M', 'logo', '-p', shortcut, '-m', 'logo')
+                assert workspace() == expected, f'late Super+{shortcut} after {gap}ms was missed'
+                request('workspace 1')
+        assert not page_events(), 'rescued page press/release leaked into application'
+        key('-P', 'Page_Down', '-s', '10', '-M', 'logo', '-m', 'logo', '-p', 'Page_Down')
+        assert workspace() == 2, 'early Super release cancelled the rescued chord'
+        request('workspace 1')
+        assert not page_events(), 'early Super release leaked the consumed page release'
+        for shortcut in ('Page_Up', 'Page_Down'):
+            before = len(page_events())
+            key('-k', shortcut)
+            assert len(page_events()) == before + 2, 'bare page tap lost press or release'
+            before = len(page_events())
+            key('-P', shortcut, '-s', '80', '-p', shortcut)
+            assert len(page_events()) == before + 2, 'bare held page lost press or release'
+        before = len(page_events())
+        key('-P', 'Page_Down', '-s', '80', '-M', 'logo',
+            '-p', 'Page_Down', '-m', 'logo')
+        assert workspace() == 1, 'Super outside the grace period stole ordinary paging'
+        assert len(page_events()) == before + 2
+        keylog.write_text('')
+        key('-P', 'Page_Down', '-P', 'a', '-p', 'a', '-p', 'Page_Down')
+        pressed = [line.split()[0] for line in keylog.read_text().splitlines()
+                   if not line.startswith('release ')]
+        assert pressed == ['65366', '97'], f'pending page reordered with typing: {pressed}'
+        paging.terminate(); paging.wait(timeout=5)
+        wait_for(lambda: not status()['clients'], 'paging probe closed')
         launch('Writer')
         wait_for(lambda: len(status()['clients']) == 1, 'first native window')
         one = active()
@@ -176,11 +222,14 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         lock = subprocess.Popen(['swaylock', '--color', '101313'], env=env, stdout=log, stderr=log)
         children.append(lock)
         wait_for(lambda: status()['locked'], 'secure session lock')
+        locked_workspace = workspace()
+        key('-P', 'Page_Down', '-s', '10', '-M', 'logo', '-p', 'Page_Down', '-m', 'logo')
+        assert workspace() == locked_workspace, 'late Super bypassed the session lock'
         assert not request('exec touch /tmp/simplewm-lock-bypass')['ok']
         lock.kill(); lock.wait()
         assert status()['locked'], 'locker crash must remain locked'
         assert not notifications.exists(), 'Workspace shortcuts must not send notifications'
-        print('OK native/Xwayland windows, real shortcuts, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
+        print('OK native/Xwayland windows, real shortcuts, late-Super paging grace, ordinary page delivery/order, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
     except BaseException:
         log.flush()
         print((root / 'session.log').read_text(errors='replace'), file=sys.stderr)
