@@ -52,11 +52,12 @@ workspaces, application rules, and startup commands are configurable. Workspaces
 stop at 1 and 9; Super+1 always reaches the first workspace. Super+S opens the
 launcher. Super+A launches LibreOffice Writer; Super+Q opens SimpleVol.
 
-Super+Page Up/Down workspace shortcuts allow Super to arrive up to 30 ms after
-the page key, accommodating nearly simultaneous presses. Bare Page Up/Down
-presses wait at most 30 ms; releasing the key or pressing another key forwards
-them sooner. This applies only when that page key has a Super-only workspace
-binding. Typing and other shortcuts retain their normal timing.
+Super+Enter and Super+Page Up/Down workspace shortcuts allow Super to arrive up
+to 30 ms after the other key, accommodating nearly simultaneous presses. Bare
+Enter and Page Up/Down presses wait at most 30 ms; releasing the key or pressing
+another key forwards them sooner. This applies only when Enter has a Super-only
+binding or the page key has a Super-only workspace binding. Other typing and
+shortcuts retain their normal timing.
 
 `simplewm --check-config -c path` validates before starting. Super+Shift+R,
 `simplewmctl reload`, or SIGHUP applies changes without restarting applications.

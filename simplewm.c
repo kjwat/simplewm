@@ -87,7 +87,7 @@
 #define MAX(A, B)               ((A) > (B) ? (A) : (B))
 #define MIN(A, B)               ((A) < (B) ? (A) : (B))
 #define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
-#define PAGE_GRACE_MS           30
+#define CHORD_GRACE_MS          30
 #define VISIBLEON(C, M)         ((M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 #define END(A)                  ((A) + LENGTH(A))
@@ -177,11 +177,11 @@ typedef struct {
 	const xkb_keysym_t *keysyms; /* invalid if nsyms == 0 */
 	uint32_t mods; /* invalid if nsyms == 0 */
 	struct wl_event_source *key_repeat_source;
-	struct wl_event_source *page_grace_source;
-	struct wlr_keyboard_key_event pending_page;
-	xkb_keysym_t pending_page_sym;
-	struct wlr_surface *pending_page_focus; /* compared only, never dereferenced */
-	int page_pending;
+	struct wl_event_source *chord_grace_source;
+	struct wlr_keyboard_key_event pending_chord;
+	xkb_keysym_t pending_chord_sym;
+	struct wlr_surface *pending_chord_focus; /* compared only, never dereferenced */
+	int chord_pending;
 
 	struct wl_listener modifiers;
 	struct wl_listener key;
@@ -336,7 +336,7 @@ static int keybinding(uint32_t mods, xkb_keysym_t sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
-static int flushpage(void *data);
+static int flushchord(void *data);
 static void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
@@ -951,7 +951,7 @@ createkeyboardgroup(void)
 	LISTEN(&group->wlr_group->keyboard.events.modifiers, &group->modifiers, keypressmod);
 
 	group->key_repeat_source = wl_event_loop_add_timer(event_loop, keyrepeat, group);
-	group->page_grace_source = wl_event_loop_add_timer(event_loop, flushpage, group);
+	group->chord_grace_source = wl_event_loop_add_timer(event_loop, flushchord, group);
 
 	/* A seat can only have one keyboard, but this is a limitation of the
 	 * Wayland protocol - not wlroots. We assign all connected keyboards to the
@@ -1336,7 +1336,7 @@ destroykeyboardgroup(struct wl_listener *listener, void *data)
 {
 	KeyboardGroup *group = wl_container_of(listener, group, destroy);
 	wl_event_source_remove(group->key_repeat_source);
-	wl_event_source_remove(group->page_grace_source);
+	wl_event_source_remove(group->chord_grace_source);
 	wlr_keyboard_group_destroy(group->wlr_group);
 	wl_list_remove(&group->key.link);
 	wl_list_remove(&group->modifiers.link);
@@ -1668,35 +1668,35 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	return 0;
 }
 
-/* Only workspace paging gets a 30ms grace period. Ordinary typing stays immediate. */
+/* Allow slightly late Super for workspace paging and the Enter binding. */
 static int
-pagebinding(xkb_keysym_t sym)
+gracebinding(xkb_keysym_t sym)
 {
-	if (sym != XKB_KEY_Page_Up && sym != XKB_KEY_Page_Down)
+	if (sym != XKB_KEY_Page_Up && sym != XKB_KEY_Page_Down && sym != XKB_KEY_Return)
 		return 0;
 	for (int i = 0; i < cfg.nbindings; i++)
-		if (cfg.bindings[i].action == A_WORKSPACE &&
+		if ((sym == XKB_KEY_Return || cfg.bindings[i].action == A_WORKSPACE) &&
 				cfg.bindings[i].mod == WLR_MODIFIER_LOGO && cfg.bindings[i].sym == sym)
 			return 1;
 	return 0;
 }
 
 int
-flushpage(void *data)
+flushchord(void *data)
 {
 	KeyboardGroup *group = data;
-	if (!group->page_pending)
+	if (!group->chord_pending)
 		return 0;
-	group->page_pending = 0;
-	wl_event_source_timer_update(group->page_grace_source, 0);
+	group->chord_pending = 0;
+	wl_event_source_timer_update(group->chord_grace_source, 0);
 	/* Never deliver an old press into a different window or the lock screen. */
-	if (locked || group->pending_page_focus != seat->keyboard_state.focused_surface) {
-		group->consumed[group->pending_page.keycode] = 1;
+	if (locked || group->pending_chord_focus != seat->keyboard_state.focused_surface) {
+		group->consumed[group->pending_chord.keycode] = 1;
 		return 0;
 	}
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
-	wlr_seat_keyboard_notify_key(seat, group->pending_page.time_msec,
-			group->pending_page.keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
+	wlr_seat_keyboard_notify_key(seat, group->pending_chord.time_msec,
+			group->pending_chord.keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
 	return 0;
 }
 
@@ -1720,12 +1720,12 @@ keypress(struct wl_listener *listener, void *data)
 	uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
 
 	/* A following physical Super event is emitted before its modifier update.
-	 * Leave the page queued until keypressmod sees the updated state. */
+	 * Leave the key queued until keypressmod sees the updated state. */
 	int super_press = event->state == WL_KEYBOARD_KEY_STATE_PRESSED && nsyms == 1 &&
 			(syms[0] == XKB_KEY_Super_L || syms[0] == XKB_KEY_Super_R);
-	if (group->page_pending && (!super_press ||
-			(uint32_t)(event->time_msec - group->pending_page.time_msec) > PAGE_GRACE_MS))
-		flushpage(group);
+	if (group->chord_pending && (!super_press ||
+			(uint32_t)(event->time_msec - group->pending_chord.time_msec) > CHORD_GRACE_MS))
+		flushchord(group);
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED && event->keycode <= KEY_MAX && group->consumed[event->keycode]) {
@@ -1749,13 +1749,13 @@ keypress(struct wl_listener *listener, void *data)
 		return;
 	}
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED &&
-			CLEANMASK(mods) == 0 && nsyms == 1 && pagebinding(syms[0]) &&
+			CLEANMASK(mods) == 0 && nsyms == 1 && gracebinding(syms[0]) &&
 			event->keycode <= KEY_MAX) {
-		group->pending_page = *event;
-		group->pending_page_sym = syms[0];
-		group->pending_page_focus = seat->keyboard_state.focused_surface;
-		group->page_pending = 1;
-		wl_event_source_timer_update(group->page_grace_source, PAGE_GRACE_MS);
+		group->pending_chord = *event;
+		group->pending_chord_sym = syms[0];
+		group->pending_chord_focus = seat->keyboard_state.focused_surface;
+		group->chord_pending = 1;
+		wl_event_source_timer_update(group->chord_grace_source, CHORD_GRACE_MS);
 		return;
 	}
 
@@ -1776,17 +1776,17 @@ keypressmod(struct wl_listener *listener, void *data)
 	/* Send modifiers to the client. */
 	wlr_seat_keyboard_notify_modifiers(seat,
 			&group->wlr_group->keyboard.modifiers);
-	if (group->page_pending) {
+	if (group->chord_pending) {
 		uint32_t mods = wlr_keyboard_get_modifiers(&group->wlr_group->keyboard);
 		if (!locked && CLEANMASK(mods) == WLR_MODIFIER_LOGO &&
-				group->pending_page_focus == seat->keyboard_state.focused_surface &&
-				pagebinding(group->pending_page_sym)) {
-			group->page_pending = 0;
-			wl_event_source_timer_update(group->page_grace_source, 0);
-			group->consumed[group->pending_page.keycode] = 1;
-			keybinding(mods, group->pending_page_sym);
+				group->pending_chord_focus == seat->keyboard_state.focused_surface &&
+				gracebinding(group->pending_chord_sym)) {
+			group->chord_pending = 0;
+			wl_event_source_timer_update(group->chord_grace_source, 0);
+			group->consumed[group->pending_chord.keycode] = 1;
+			keybinding(mods, group->pending_chord_sym);
 		} else {
-			flushpage(group);
+			flushchord(group);
 		}
 	}
 }

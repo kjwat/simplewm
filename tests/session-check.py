@@ -30,6 +30,7 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
     config = root / 'config'
     base = (source / 'config').read_text().replace('exec simplewm-services', '# services disabled in isolated tests')
     base = base.replace('background /usr/local/share/backgrounds/simpleos/simpleos-background.png fill', 'background none')
+    base = base.replace('set $terminal simpleterm', 'set $terminal simplewm-test-terminal')
     config.write_text(base)
     helpers = root / 'bin'
     helpers.mkdir()
@@ -37,12 +38,17 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
     notify = helpers / 'notify-send'
     notify.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SIMPLEWM_TEST_NOTIFICATION_LOG"\n')
     notify.chmod(0o755)
+    terminal_log = root / 'terminal-launches'
+    terminal = helpers / 'simplewm-test-terminal'
+    terminal.write_text('#!/bin/sh\nprintf "launch\\n" >> "$SIMPLEWM_TEST_TERMINAL_LOG"\n')
+    terminal.chmod(0o755)
     env = os.environ.copy()
     env.update(HOME=str(home), XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS='headless',
                WLR_HEADLESS_OUTPUTS='2', WLR_RENDERER='pixman', GDK_BACKEND='wayland',
                GSETTINGS_BACKEND='memory', NO_AT_BRIDGE='1', XDG_CONFIG_HOME=str(home / '.config'),
                PATH=str(helpers) + os.pathsep + env['PATH'],
-               SIMPLEWM_TEST_NOTIFICATION_LOG=str(notifications))
+               SIMPLEWM_TEST_NOTIFICATION_LOG=str(notifications),
+               SIMPLEWM_TEST_TERMINAL_LOG=str(terminal_log))
     env.pop('SIMPLEWM_NO_NOTIFICATIONS', None)
     env.pop('DISPLAY', None)
     env.pop('WAYLAND_DISPLAY', None)
@@ -157,6 +163,38 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         pressed = [line.split()[0] for line in keylog.read_text().splitlines()
                    if not line.startswith('release ')]
         assert pressed == ['65366', '97'], f'pending page reordered with typing: {pressed}'
+        def terminal_launches():
+            return len(terminal_log.read_text().splitlines()) if terminal_log.exists() else 0
+        def enter_events():
+            lines = keylog.read_text().splitlines() if keylog.exists() else []
+            return [line for line in lines if line.split()[0] == '65293' or
+                    (line.startswith('release ') and line.split()[1] == '65293')]
+        for gap in ('0', '5', '15'):
+            before = terminal_launches()
+            delay = ('-s', gap) if gap != '0' else ()
+            key('-P', 'Return', *delay, '-M', 'logo', '-p', 'Return', '-m', 'logo')
+            wait_for(lambda: terminal_launches() == before + 1, f'late Super+Enter after {gap}ms')
+        assert not enter_events(), 'rescued Enter press/release leaked into application'
+        before = terminal_launches()
+        key('-P', 'Return', '-s', '10', '-M', 'logo', '-m', 'logo', '-p', 'Return')
+        wait_for(lambda: terminal_launches() == before + 1, 'early Super release with Enter')
+        assert not enter_events(), 'early Super release leaked consumed Enter'
+        before = terminal_launches()
+        key('-M', 'logo', '-k', 'Return', '-m', 'logo')
+        wait_for(lambda: terminal_launches() == before + 1, 'normal Super+Enter')
+        for args in (('-k', 'Return'), ('-P', 'Return', '-s', '80', '-p', 'Return'),
+                     ('-P', 'Return', '-s', '80', '-M', 'logo', '-p', 'Return', '-m', 'logo'),
+                     ('-M', 'ctrl', '-k', 'Return', '-m', 'ctrl')):
+            before = len(enter_events())
+            launches = terminal_launches()
+            key(*args)
+            assert len(enter_events()) == before + 2, 'ordinary Enter lost press or release'
+            assert terminal_launches() == launches, 'ordinary Enter launched the terminal'
+        keylog.write_text('')
+        key('-P', 'Return', '-P', 'a', '-p', 'a', '-p', 'Return')
+        pressed = [line.split()[0] for line in keylog.read_text().splitlines()
+                   if not line.startswith('release ')]
+        assert pressed == ['65293', '97'], f'pending Enter reordered with typing: {pressed}'
         paging.terminate(); paging.wait(timeout=5)
         wait_for(lambda: not status()['clients'], 'paging probe closed')
         launch('Writer')
@@ -225,11 +263,14 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         locked_workspace = workspace()
         key('-P', 'Page_Down', '-s', '10', '-M', 'logo', '-p', 'Page_Down', '-m', 'logo')
         assert workspace() == locked_workspace, 'late Super bypassed the session lock'
+        launches = terminal_launches()
+        key('-P', 'Return', '-s', '10', '-M', 'logo', '-p', 'Return', '-m', 'logo')
+        assert terminal_launches() == launches, 'late Super+Enter bypassed the session lock'
         assert not request('exec touch /tmp/simplewm-lock-bypass')['ok']
         lock.kill(); lock.wait()
         assert status()['locked'], 'locker crash must remain locked'
         assert not notifications.exists(), 'Workspace shortcuts must not send notifications'
-        print('OK native/Xwayland windows, real shortcuts, late-Super paging grace, ordinary page delivery/order, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
+        print('OK native/Xwayland windows, real shortcuts, late-Super paging/Enter grace, ordinary key delivery/order, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
     except BaseException:
         log.flush()
         print((root / 'session.log').read_text(errors='replace'), file=sys.stderr)
