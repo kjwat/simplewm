@@ -68,6 +68,41 @@ fresh SimpleOS installations. Log out and back in afterward. Existing stock
 13-point terminal settings move to 12 once, with the old config saved in
 `~/.local/state/simplewm/config-before-butterfonts`; other font choices stay as set.
 
+Native touchpad pinch, swipe and hold gestures are forwarded to the
+pointer-focused Wayland client through `zwp_pointer_gestures_v1` (version 3).
+The wlroots 0.18 input path preserves event timestamps, finger counts, movement,
+pinch scale/rotation and cancellation. Existing pointer movement, scrolling,
+tapping, buttons and keyboard bindings keep their normal handling. No gesture
+daemon or additional runtime dependency is needed.
+
+To verify the protocol, run this inside a SimpleWM session (install the optional
+Debian `wayland-utils` package if `wayland-info` is unavailable):
+
+```sh
+wayland-info | grep zwp_pointer_gestures_v1
+```
+
+Expect an interface entry with version 3. This confirms protocol advertisement;
+it does not prove hardware events are arriving. In Firefox, confirm
+`about:support` reports the Window Protocol as `wayland`, place the pointer over
+a web page and pinch with two fingers. If Firefox starts through Xwayland,
+close its processes and start `MOZ_ENABLE_WAYLAND=1 firefox`. For event tracing,
+start a fresh Firefox process with `WAYLAND_DEBUG=1 MOZ_ENABLE_WAYLAND=1 firefox`
+and look for `zwp_pointer_gesture_pinch_v1` begin/update/end events while
+pinching. Other clients must also support the protocol; hold/swipe actions are
+chosen by each application. Physical gesture recognition depends on the device
+and libinput.
+
+Existing ISO installations gain this through the ordinary `simpleupdate`
+source rebuild and staged installation once this revision is published to the
+official update repository. Log out and back in to run the new compositor;
+configuration reload alone cannot replace the running executable. No ISO
+rebuild, configuration migration or updater protocol change is required.
+Before publication, a local checkout can be staged through
+`sudo simpleupdate --wm-local /path/to/simplewm --rebuild`.
+`make check-gestures` checks all cursor gesture listeners and their exact
+wlroots send arguments, including both cancellation states.
+
 `simplewmctl status` reports JSON with displays, layout, focused client,
 workspaces, and window geometry. Other commands use the same actions as
 `bindsym`, for example `simplewmctl workspace 2` or `simplewmctl maximize`.

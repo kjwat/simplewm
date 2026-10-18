@@ -49,6 +49,7 @@
 #include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
@@ -314,6 +315,14 @@ static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static Client *focustop(Monitor *m);
 static void fullscreennotify(struct wl_listener *listener, void *data);
+static void gestureswipebegin(struct wl_listener *listener, void *data);
+static void gestureswipeupdate(struct wl_listener *listener, void *data);
+static void gestureswipeend(struct wl_listener *listener, void *data);
+static void gesturepinchbegin(struct wl_listener *listener, void *data);
+static void gesturepinchupdate(struct wl_listener *listener, void *data);
+static void gesturepinchend(struct wl_listener *listener, void *data);
+static void gestureholdbegin(struct wl_listener *listener, void *data);
+static void gestureholdend(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void inputdevice(struct wl_listener *listener, void *data);
@@ -411,6 +420,7 @@ static struct wlr_output_power_manager_v1 *power_mgr;
 
 static struct wlr_pointer_constraints_v1 *pointer_constraints;
 static struct wlr_relative_pointer_manager_v1 *relative_pointer_mgr;
+static struct wlr_pointer_gestures_v1 *pointer_gestures;
 static struct wlr_pointer_constraint_v1 *active_constraint;
 
 static struct wlr_cursor *cursor;
@@ -1475,6 +1485,81 @@ fullscreennotify(struct wl_listener *listener, void *data)
 	setfullscreen(c, client_wants_fullscreen(c));
 }
 
+/* Forward native touchpad gestures to the pointer-focused client via wlroots.
+ * Keep libinput timestamps and values; gestures do not move or refocus the cursor. */
+void
+gestureswipebegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_swipe_begin(pointer_gestures, seat,
+			event->time_msec, event->fingers);
+}
+
+void
+gestureswipeupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_update_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_swipe_update(pointer_gestures, seat,
+			event->time_msec, event->dx, event->dy);
+}
+
+void
+gestureswipeend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_swipe_end_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_swipe_end(pointer_gestures, seat,
+			event->time_msec, event->cancelled);
+}
+
+void
+gesturepinchbegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_pinch_begin(pointer_gestures, seat,
+			event->time_msec, event->fingers);
+}
+
+void
+gesturepinchupdate(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_update_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_pinch_update(pointer_gestures, seat,
+			event->time_msec, event->dx, event->dy,
+			event->scale, event->rotation);
+}
+
+void
+gesturepinchend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_pinch_end_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_pinch_end(pointer_gestures, seat,
+			event->time_msec, event->cancelled);
+}
+
+void
+gestureholdbegin(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_hold_begin_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_hold_begin(pointer_gestures, seat,
+			event->time_msec, event->fingers);
+}
+
+void
+gestureholdend(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_hold_end_event *event = data;
+	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
+	wlr_pointer_gestures_v1_send_hold_end(pointer_gestures, seat,
+			event->time_msec, event->cancelled);
+}
+
 void
 gpureset(struct wl_listener *listener, void *data)
 {
@@ -2506,6 +2591,8 @@ setup(void)
 	LISTEN_STATIC(&pointer_constraints->events.new_constraint, createpointerconstraint);
 
 	relative_pointer_mgr = wlr_relative_pointer_manager_v1_create(dpy);
+	if (!(pointer_gestures = wlr_pointer_gestures_v1_create(dpy)))
+		die("could not create pointer gestures protocol");
 
 	/*
 	 * Creates a cursor, which is a wlroots utility for tracking the cursor
@@ -2535,6 +2622,14 @@ setup(void)
 	LISTEN_STATIC(&cursor->events.button, buttonpress);
 	LISTEN_STATIC(&cursor->events.axis, axisnotify);
 	LISTEN_STATIC(&cursor->events.frame, cursorframe);
+	LISTEN_STATIC(&cursor->events.swipe_begin, gestureswipebegin);
+	LISTEN_STATIC(&cursor->events.swipe_update, gestureswipeupdate);
+	LISTEN_STATIC(&cursor->events.swipe_end, gestureswipeend);
+	LISTEN_STATIC(&cursor->events.pinch_begin, gesturepinchbegin);
+	LISTEN_STATIC(&cursor->events.pinch_update, gesturepinchupdate);
+	LISTEN_STATIC(&cursor->events.pinch_end, gesturepinchend);
+	LISTEN_STATIC(&cursor->events.hold_begin, gestureholdbegin);
+	LISTEN_STATIC(&cursor->events.hold_end, gestureholdend);
 
 	cursor_shape_mgr = wlr_cursor_shape_manager_v1_create(dpy, 1);
 	LISTEN_STATIC(&cursor_shape_mgr->events.request_set_shape, setcursorshape);

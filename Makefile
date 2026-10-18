@@ -66,6 +66,8 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/wallpaper-theme-simplewm.sh $(DESTDIR)$(PREFIX)/bin/wallpaper-theme
 	rm -f $(DESTDIR)$(PREFIX)/libexec/simpleupdate-target
 	rm -f $(DESTDIR)$(PREFIX)/bin/simpleupdate-target $(DESTDIR)$(PREFIX)/bin/simplewm-lock-client
+check-gestures: all
+	python3 tests/gestures-check.py
 clean:
 	rm -rf $(BUILD)
-.PHONY: all install install-fonts uninstall clean lock-preview
+.PHONY: all install install-fonts uninstall clean lock-preview check-gestures

@@ -1,3 +1,30 @@
+# Native touchpad gestures verification — 2026-10-18
+
+- Built against installed wlroots 0.18.2 with all compiler warnings treated as
+  errors, including the lock client.
+- `make check-gestures` exercises the eight real compositor cursor listeners and
+  checks every wlroots gesture send argument: timestamps near uint32 wrap,
+  fingers, signed movement, absolute pinch scale, signed rotation and both
+  normal/cancelled ends. Cursor position is unchanged. The optional real
+  `wayland-info` check confirms `zwp_pointer_gestures_v1` version 3 in a headless
+  SimpleWM session. Send functions are intercepted for payload assertions;
+  this does not simulate libinput hardware or a browser.
+- All 22 configuration checks and the existing native Wayland/Xwayland session
+  regression passed, including keyboard shortcuts, focus, clipboard, reload,
+  screenshots and session lock. Corrected its stale font expectation from 13
+  to the already shipped 12; no font configuration changed.
+- Existing updater containment/rollback, logic, ordinary orchestration, shipped
+  bootstrap handoff and seed validation checks passed. The real updater build
+  and Makefile installation successfully staged the compositor, documentation
+  and source snapshot in a temporary prefix, with runtime linkage verified.
+- No new dependency, updater release or migration is required. Existing ISOs
+  receive the compositor through the normal source update after publication;
+  a new login starts the updated binary. No remote publication or host install
+  was performed during these checks.
+- Physical libinput touchpad gestures and Firefox pinch-to-zoom remain manual
+  hardware acceptance checks. See README.md for protocol and Firefox tracing
+  instructions.
+
 # SimpleOS 0.8 verification
 
 Font defaults verified on 2026-10-15:
