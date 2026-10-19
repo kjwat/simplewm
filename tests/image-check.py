@@ -59,3 +59,39 @@ with tempfile.TemporaryDirectory() as temp:
         assert 'vol' in str(error)
     assert bashrc.read_text() == content
 print('OK all 26 shipped aliases, manifest additions, repeated builds, personal shell settings and missing-target rejection')
+
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    source, payload = root / 'source', root / 'payload'
+    source.mkdir()
+    # Historical snapshots still load; current sources must include the engine.
+    prepare['verify_desktop_payload'](payload, source)
+    (source / 'install-simpleplay.sh').write_text('#!/bin/sh\n')
+    binary = payload / 'usr/local/bin'
+    binary.mkdir(parents=True)
+    for name in ('simpleplay', 'simpleterm'):
+        path = binary / name
+        path.write_text('#!/bin/sh\n'); path.chmod(0o755)
+    try:
+        prepare['verify_desktop_payload'](payload, source)
+        raise AssertionError('image without the shared audio engine was accepted')
+    except RuntimeError as error:
+        assert 'simpleplay-core' in str(error)
+    core = binary / 'simpleplay-core'
+    core.write_text('#!/bin/sh\n'); core.chmod(0o755)
+    for relative in ('applications/org.simplesuite.Simpleplay.desktop',
+                     'applications/org.simplesuite.Simpleterm.desktop',
+                     'simplesuite/simpleplay/simpleplay.svg', 'simplesuite/simpleplay/SIMPLEPLAY.md',
+                     'simplesuite/simpleterm/simpleterm.png', 'simplesuite/simpleterm/bashrc',
+                     'simplesuite/simpleterm/SIMPLETERM.md'):
+        path = payload / 'usr/local/share' / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('staged asset\n')
+    prepare['verify_desktop_payload'](payload, source)
+    (payload / 'usr/local/share/simplesuite/simpleterm/bashrc').unlink()
+    try:
+        prepare['verify_desktop_payload'](payload, source)
+        raise AssertionError('image without terminal assets was accepted')
+    except RuntimeError as error:
+        assert 'bashrc' in str(error)
+print('OK fresh images require SimplePlay, its core, SimpleTerm and their desktop assets')

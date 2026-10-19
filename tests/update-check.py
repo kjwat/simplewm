@@ -107,6 +107,7 @@ print('OK Suite/SimpleWM partial-install rollback, failed build/test containment
 for verify in (False, True):
     with tempfile.TemporaryDirectory() as temp:
         root=Path(temp); source=root/'source'; source.mkdir()
+        (source/'install-simpleplay.sh').write_text('#!/bin/sh\n')
         stage=root/'stage'; local=stage/'usr/local'
         (local/'bin').mkdir(parents=True)
         (local/'share/simplesuite').mkdir(parents=True)
@@ -115,14 +116,23 @@ for verify in (False, True):
             update.build_and_test(source, stage, '0'*40, {}, None, verify=verify)
         commands=[call.args[0] for call in runner.call_args_list]
         assert any('release-simplewords' in command for command in commands)==verify
-        assert any(command[0] == 'make' and 'all' in command and 'simpleterm' in command
-                   for command in commands), 'Simpleterm must build with every changed Suite release'
+        assert any(command[0] == 'make' and all(target in command for target in ('all', 'simpleterm', 'simpleplay'))
+                   for command in commands), 'SimpleTerm and SimplePlay must build with every changed Suite release'
         terminal_install = next(call for call in runner.call_args_list
                                 if str(source / 'install-simpleterm.sh') in call.args[0])
         assert terminal_install.args[0] == ['sh', str(source / 'install-simpleterm.sh'), '--no-deps']
         assert terminal_install.kwargs['env']['DESTDIR'] == str(stage)
         assert terminal_install.kwargs['env']['SIMPLETERM_NONINTERACTIVE'] == '1'
-print('OK normal updates stage Simpleterm and its Bash asset; --verify explicitly enables developer tests')
+        player_install = next(call for call in runner.call_args_list
+                              if str(source / 'install-simpleplay.sh') in call.args[0])
+        assert player_install.args[0] == ['sh', str(source / 'install-simpleplay.sh'), '--no-deps']
+        assert player_install.kwargs['env']['DESTDIR'] == str(stage)
+        assert player_install.kwargs['env']['SIMPLEPLAY_NONINTERACTIVE'] == '1'
+        assert player_install.kwargs['env']['SIMPLEPLAY_HEADLESS_ONLY'] == '0'
+        for package in ('libavcodec-dev', 'libsdl2-dev', 'libass-dev', 'libfluidsynth-dev',
+                        'libsidplayfp-dev', 'libjson-glib-dev', 'timgm6mb-soundfont'):
+            assert package in update.BUILD_PACKAGES
+print('OK normal updates stage SimpleTerm, SimplePlay and its core; --verify explicitly enables developer tests')
 
 # Exercise the real Git object check with a freshly initialized repository.
 # Replace only the network transport with an isolated local upstream fixture.

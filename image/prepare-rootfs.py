@@ -14,6 +14,24 @@ import shutil
 RELEASE = '0.8'
 SOURCE = Path(__file__).resolve().parent.parent
 
+def verify_desktop_payload(payload, suite_source):
+    """A current Suite image must carry its playback engine and both GUI apps."""
+    if not (suite_source / 'install-simpleplay.sh').is_file():
+        return  # Historical Suite snapshots predate SimplePlay.
+    local = payload / 'usr/local'
+    for program in ('simpleplay', 'simpleplay-core', 'simpleterm'):
+        path = local / 'bin' / program
+        if not path.is_file() or not path.stat().st_mode & 0o111:
+            raise RuntimeError(f'missing staged application: {path}')
+    for relative in ('applications/org.simplesuite.Simpleplay.desktop',
+                     'applications/org.simplesuite.Simpleterm.desktop',
+                     'simplesuite/simpleplay/simpleplay.svg', 'simplesuite/simpleplay/SIMPLEPLAY.md',
+                     'simplesuite/simpleterm/simpleterm.png', 'simplesuite/simpleterm/bashrc',
+                     'simplesuite/simpleterm/SIMPLETERM.md'):
+        path = local / 'share' / relative
+        if not path.is_file():
+            raise RuntimeError(f'missing staged desktop asset: {path}')
+
 def prepare_shell_aliases(root):
     """Generate the complete shell shortcuts from the staged Suite manifest."""
     aliases = {}
@@ -64,6 +82,7 @@ def main():
         parser.error('--suite-revision must be a full Git commit SHA')
     if revision != installed:
         parser.error('Suite revision does not match the staged install manifest')
+    verify_desktop_payload(args.payload, args.suite_source)
     root = args.rootfs.resolve()
     if root == Path('/') or not (root / 'etc/calamares/settings.conf').is_file():
         parser.error('expected an extracted SimpleOS live image')

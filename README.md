@@ -124,6 +124,12 @@ SimpleWM from `https://github.com/kjwat/simplewm.git`. No new package manager or
 automatic background updater is involved. Ordinary `apt update` and
 `apt full-upgrade` remain available for Debian and Liquorix.
 
+Suite updates also build and stage SimplePlay, `simpleplay-core`, and SimpleTerm,
+including their desktop assets. The updater installs their media development
+libraries and MIDI SoundFont before building. An installation from an older ISO
+gets these applications through the same `simpleupdate` command; the ISO's
+bundled application snapshot does not need to contain them already.
+
 Before ordinary APT updates, SimpleUpdate checks Debian sources in both
 `sources.list`/`*.list` and deb822 `*.sources` files. It replaces rolling
 `stable`/`oldstable` names with the installed Debian codename, preserving the

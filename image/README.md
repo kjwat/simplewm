@@ -11,7 +11,7 @@ The build staging directory is `/home/keelan/simpleos-build`:
 * `buildroot/`: separate Debian build/test environment, with compiler headers
   and the full upstream test dependencies.
 * `simplesuite-next/`: verified official Git source at the recorded revision.
-* `payload-next/usr/local/`: tested Suite and Simpleterm staged through their installers.
+* `payload-next/usr/local/`: tested Suite, SimpleTerm and SimplePlay staged through their installers.
 * `media/`: extracted ISO media, used to replace the live squashfs and boot files.
 
 To reproduce from a new staging directory, extract the ISO with xorriso and
@@ -21,7 +21,11 @@ Liquorix image and headers metapackages, wlroots 0.18 runtime, Xwayland, Firefox
 ESR, git, GTK/VTE, PipeWire/WirePlumber, portals, and the helpers named in the
 project README. Keep the XFCE/Calamares live environment. Build/test/stage the
 official Suite in a separate Debian root using its upstream release gate,
-then stage Simpleterm with `install-simpleterm.sh --no-deps` and DESTDIR.
+then stage SimpleTerm and SimplePlay with `install-simpleterm.sh --no-deps` and
+`install-simpleplay.sh --no-deps`, both using DESTDIR. Include `simpleplay-core`
+and the FFmpeg, SDL 2, libass, FluidSynth, libsidplayfp, JSON-GLib and SoundFont
+runtime packages. `simpleupdate` installs their build dependencies and stages
+both standalone applications when updating a system installed from an older ISO.
 
 Divert `/usr/lib/os-release` to `/usr/lib/os-release.debian` using dpkg-divert
 inside the staged image, then run `prepare-rootfs.py ROOTFS PAYLOAD SUITE_SOURCE`.

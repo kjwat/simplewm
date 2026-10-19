@@ -57,6 +57,10 @@ BUILD_PACKAGES = [
     'libgtk-3-dev', 'libvte-2.91-dev', 'libpcre2-dev', 'python3', 'python3-gi',
     'python3-dbus', 'gir1.2-gtk-3.0', 'gir1.2-vte-2.91', 'gir1.2-webkit2-4.1',
     'python3-cairo', 'dbus-x11', 'xvfb', 'xauth', 'openbox', 'xdotool',
+    'ffmpeg', 'libcairo2-dev', 'libavformat-dev', 'libavcodec-dev', 'libavutil-dev',
+    'libavfilter-dev', 'libswscale-dev', 'libswresample-dev', 'libsdl2-dev',
+    'libass-dev', 'libfluidsynth-dev', 'libsidplayfp-dev', 'libjson-glib-dev',
+    'timgm6mb-soundfont', 'fonts-dejavu-core', 'adwaita-icon-theme', 'desktop-file-utils',
 ]
 WM_BUILD_PACKAGES = [
     'build-essential', 'pkg-config', 'git', 'ca-certificates', 'libwlroots-0.18-dev',
@@ -671,18 +675,26 @@ def build_and_test(source, stage, sha, env, demote, verify=False):
               'PREFIX=/usr/local', 'SIMPLESUITE_INSTALL_SIMPLESERVE=1']
     opts = dict(env=env, preexec_fn=demote)
     jobs = str(min(4, os.cpu_count() or 1))
+    # Retained historical/local Suite sources can predate the player. Published
+    # releases containing its installer always build and stage both executables.
+    have_player = (source / 'install-simpleplay.sh').is_file()
     say(f'Building {sha[:12]} in a private directory')
-    run(common + ['-j' + jobs, 'all', 'simpleterm'], **opts)
+    run(common + ['-j' + jobs, 'all', 'simpleterm'] + (['simpleplay'] if have_player else []), **opts)
     if verify:
         say('Running the developer release gate (--verify)')
         run(['xvfb-run', '-a', '-s', '-screen 0 1280x800x24',
-             'dbus-run-session', '--', *common, 'release-simplewords', 'test-simpleterm'],
+             'dbus-run-session', '--', *common, 'release-simplewords', 'test-simpleterm'] +
+            (['test-simpleplay', 'test-simpleplay-frontends'] if have_player else []),
             env=env | {'GDK_BACKEND': 'x11', 'LIBGL_ALWAYS_SOFTWARE': '1'}, preexec_fn=demote)
     say('Staging the updated programs under /usr/local')
     run(common + [f'DESTDIR={stage}', 'install'], **opts)
     run(['sh', str(source / 'install-simpleterm.sh'), '--no-deps'],
         env=env | {'DESTDIR': str(stage), 'SIMPLETERM_NONINTERACTIVE': '1'},
         cwd=source, preexec_fn=demote)
+    if have_player:
+        run(['sh', str(source / 'install-simpleplay.sh'), '--no-deps'],
+            env=env | {'DESTDIR': str(stage), 'SIMPLEPLAY_NONINTERACTIVE': '1',
+                       'SIMPLEPLAY_HEADLESS_ONLY': '0'}, cwd=source, preexec_fn=demote)
     local = stage / 'usr/local'
     if installed_revision(local / 'share/simplesuite/install-manifest') != sha:
         raise RuntimeError('staged provenance does not match the fetched commit')
