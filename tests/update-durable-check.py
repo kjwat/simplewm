@@ -120,3 +120,55 @@ with tempfile.TemporaryDirectory(prefix='rebuilt-update-') as temp:
     assert (prefix / 'bin/personal-tool').read_text() == 'personal'
     assert (prefix / 'bin/simplepdf-mobi').read_text() == 'local rebuild'
     print('OK local rebuilds update with backups, failed verification/rollback restore their exact bytes, unknown programs stay protected')
+
+with tempfile.TemporaryDirectory(prefix='standalone-update-') as temp:
+    base = Path(temp); prefix = base / 'local'; stage = base / 'stage'
+    for root in (prefix, stage):
+        (root / 'bin').mkdir(parents=True)
+        for name, data in (
+                ('share/applications/org.simplesuite.Simpleplay.desktop', 'SimplePlay desktop'),
+                ('share/simplesuite/simpleplay/simpleplay.svg', 'SimplePlay icon'),
+                ('share/simplesuite/simpleplay/SIMPLEPLAY.md', 'SimplePlay manual')):
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(data); path.chmod(0o644)
+        for name in ('simpleplay', 'simpleplay-core'):
+            program = root / 'bin' / name
+            program.write_text('standalone build' if root == prefix else 'updated build')
+            program.chmod(0o755)
+        for directory in (root, *(p for p in root.rglob('*') if p.is_dir())):
+            directory.chmod(0o755)
+    (prefix / 'share/simpleupdate').mkdir(mode=0o755)
+    record = prefix / 'share/simpleupdate/owned.json'
+    tx.write_json(record, {})  # The original ISO predates the optional player.
+    original_inventory = record.read_bytes()
+    transaction = tx.Transaction(prefix)
+    managed_paths = tx.inventory(stage)
+    def failed_verification():
+        raise RuntimeError('injected standalone verification failure')
+    try:
+        transaction.install([stage], failed_verification, managed_paths=managed_paths)
+        raise AssertionError('verification failure was ignored')
+    except RuntimeError as error:
+        assert 'verification failure' in str(error), str(error)
+    assert record.read_bytes() == original_inventory
+    assert (prefix / 'bin/simpleplay').read_text() == 'standalone build'
+    transaction.install([stage], lambda: None, managed_paths=managed_paths)
+    for name in ('simpleplay', 'simpleplay-core'):
+        assert (prefix / 'bin' / name).read_text() == 'updated build'
+        assert (transaction.retained / 'old/bin' / name).read_text() == 'standalone build'
+        assert json.loads(record.read_text())['bin/' + name] == tx.fingerprint(prefix / 'bin' / name)
+    transaction.rollback()
+    assert record.read_bytes() == original_inventory
+    assert all((prefix / 'bin' / name).read_text() == 'standalone build'
+               for name in ('simpleplay', 'simpleplay-core'))
+
+    # Unverified callers cannot enroll paths merely because a file is staged.
+    try:
+        transaction.install([stage], lambda: None)
+        raise AssertionError('an unrecognized program was adopted')
+    except RuntimeError as error:
+        assert 'unmanaged program' in str(error)
+    assert (prefix / 'bin/simpleplay').read_text() == 'standalone build'
+    assert record.read_bytes() == original_inventory
+    print('OK verified payload enrolls new component files, retains backups, and restores ownership on failure/rollback')

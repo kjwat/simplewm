@@ -33,8 +33,22 @@ installation transaction. The root-owned ownership inventory is
 An already-owned program can be rebuilt or installed locally without blocking
 the next update. Its current bytes are backed up before replacement, and both
 failed-install recovery and `--rollback-sources` restore that exact local build.
-Unmanaged conflicting programs still stop installation, and locally modified
-Suite/WM data and configuration files are preserved.
+The complete authenticated component payload defines the current installation.
+New programs, helpers and launchers are enrolled automatically, including
+administrator-installed copies absent from an older ISO's inventory. Existing
+files are backed up first; verification failure and source rollback restore
+both those files and the previous inventory. Paths outside those verified
+payloads are not adopted. Locally modified Suite/WM data and configuration files
+remain preserved. There is no separate program registry or per-program allowlist.
+Generated install manifests, source-location records, source snapshots and Git
+bundles advance with the programs; they are installation metadata, not personal
+configuration. Their previous contents are retained by the same transaction.
+
+Current Suite sources provide `make full`, `make test-full` and
+`make DESTDIR=STAGE install-full`. The updater calls that complete installation
+interface, then inventories what it actually staged. New applications and their
+helpers belong in the Suite's build/install rules, not in updater code. Older
+retained sources keep their previous installer path for compatibility.
 
 Ordinary updates display a filling seven-phase progress bar, elapsed time and
 the latest command activity. A heartbeat keeps the bar animated even while a

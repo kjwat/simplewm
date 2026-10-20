@@ -228,6 +228,7 @@ def run(update, args, log, version):
             persist(state, 'verified', component='APT')
         with tempfile.TemporaryDirectory(prefix='simpleupdate-captured-', dir='/var/tmp') as captured:
             stages = []
+            managed_paths = set()
             progress.step(5, 'Building and checking programs' if plans else 'Programs are current')
             for index, plan in enumerate(plans):
                 if plan['component'] == 'SimpleWM':
@@ -244,6 +245,7 @@ def run(update, args, log, version):
                 manifest = local / 'share' / plan['component'].lower() / 'install-manifest'
                 if update.installed_revision(manifest, key) != plan['sha']:
                     raise RuntimeError('Staged component provenance does not match the requested source')
+                managed_paths.update(transaction.inventory(local))
                 stages.append(local)
             progress.step(6, 'Backing up and installing programs' if stages else 'No programs to install')
             if stages:
@@ -255,7 +257,8 @@ def run(update, args, log, version):
                         manifest = update.PREFIX / 'share' / plan['component'].lower() / 'install-manifest'
                         if update.installed_revision(manifest, key) != plan['sha']:
                             raise RuntimeError('Installed component provenance does not match its staged payload')
-                transaction.Transaction(update.PREFIX).install(stages, verify, update.say, progress.files)
+                transaction.Transaction(update.PREFIX).install(
+                    stages, verify, update.say, progress.files, managed_paths=managed_paths)
             else:
                 progress.step(7, 'Finishing update')
         reboot = REBOOT.exists()

@@ -16,6 +16,21 @@ SOURCE = Path(__file__).resolve().parent.parent
 
 def verify_desktop_payload(payload, suite_source):
     """A current Suite image must carry its playback engine and both GUI apps."""
+    makefile = suite_source / 'Makefile'
+    if makefile.is_file() and re.search(r'^install-full\s*:', makefile.read_text(), re.M):
+        local = payload / 'usr/local'
+        manifest = local / 'share/simplesuite/install-manifest'
+        fields = dict(line.split('=', 1) for line in manifest.read_text().splitlines() if '=' in line)
+        programs = fields.get('installed_programs', '').split()
+        if fields.get('payload_scope') != 'full' or not programs or len(set(programs)) != len(programs):
+            raise RuntimeError('stage the complete Suite with make DESTDIR=PAYLOAD install-full')
+        for name in programs:
+            if not re.fullmatch(r'simple[a-z0-9-]+', name):
+                raise RuntimeError('invalid installed program in Suite payload: ' + name)
+            path = local / 'bin' / name
+            if not path.is_file() or not path.stat().st_mode & 0o111:
+                raise RuntimeError(f'missing staged application: {path}')
+        return
     if not (suite_source / 'install-simpleplay.sh').is_file():
         return  # Historical Suite snapshots predate SimplePlay.
     local = payload / 'usr/local'

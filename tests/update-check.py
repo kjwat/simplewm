@@ -134,6 +134,23 @@ for verify in (False, True):
             assert package in update.BUILD_PACKAGES
 print('OK normal updates stage SimpleTerm, SimplePlay and its core; --verify explicitly enables developer tests')
 
+for verify in (False, True):
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp); source = root / 'source'; source.mkdir()
+        (source / 'Makefile').write_text('full:\ninstall-full:\ntest-full:\n')
+        stage = root / 'stage'; local = stage / 'usr/local'
+        (local / 'bin').mkdir(parents=True)
+        data = local / 'share/simplesuite'; data.mkdir(parents=True)
+        (data / 'install-manifest').write_text('simplesuite_source_sha=' + '0' * 40 + '\n')
+        with patch.object(update, 'run') as runner:
+            update.build_and_test(source, stage, '0' * 40, {}, None, verify=verify)
+        commands = [call.args[0] for call in runner.call_args_list]
+        assert any(command[0] == 'make' and command[-1] == 'full' for command in commands)
+        assert any(command[0] == 'make' and command[-1] == 'install-full' for command in commands)
+        assert any('test-full' in command for command in commands) == verify
+        assert not any(command[0] == 'sh' for command in commands), 'new sources own their complete installation'
+print('OK current Suite owns full build/install/test packaging; updater needs no application-name changes')
+
 # Exercise the real Git object check with a freshly initialized repository.
 # Replace only the network transport with an isolated local upstream fixture.
 with tempfile.TemporaryDirectory() as temp:

@@ -46,7 +46,18 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
     for name in ('simpleterm', 'simplewm'):
         (prefix / 'bin' / name).write_text('old ' + name)
     (prefix / 'bin/simpleupdate').write_text('stable launcher')
+    source_record = prefix / 'share/simplesuite/install-source'
+    source_record.write_text('/original/source\n')
     transaction.write_json(prefix / 'share/simpleupdate/owned.json', transaction.inventory(prefix))
+    # A local install legitimately updates generated provenance too. These
+    # records must advance with the new programs, unlike personal settings.
+    local_manifest = prefix / 'share/simplesuite/install-manifest'
+    local_manifest.write_text('simplesuite_source_sha=' + original + '\nlocal_rebuild=yes\n')
+    source_record.write_text('/local/rebuild/source\n')
+    # A future application was installed locally after the ISO was made. It
+    # needs no name-specific change in the updater when the new Suite ships it.
+    (prefix / 'bin/simplearcade').write_text('local arcade build')
+    (prefix / 'bin/simplearcade').chmod(0o755)
     (prefix / 'share/simplewm/config').write_text('personal system settings')
     personal = base / 'home/writing'; personal.mkdir(parents=True)
     (personal / 'book').write_text('manuscript')
@@ -75,9 +86,14 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
         (local / 'bin').mkdir(parents=True)
         name = 'simplewm' if plan['component'] == 'SimpleWM' else 'simpleterm'
         (local / 'bin' / name).write_text('new ' + name)
+        if plan['component'] == 'SimpleSuite':
+            (local / 'bin/simplearcade').write_text('updated arcade build')
+            (local / 'bin/simplearcade').chmod(0o755)
         component = plan['component'].lower()
         data = local / 'share' / component; data.mkdir(parents=True)
         (data / 'install-manifest').write_text(component + '_source_sha=' + plan['sha'] + '\n')
+        if component == 'simplesuite':
+            (data / 'install-source').write_text('/usr/local/share/simplesuite/source\n')
         if component == 'simplewm':
             (local / 'bin/simpleupdate').write_text('must never replace stable launcher')
             (data / 'config').write_text('new defaults')
@@ -105,6 +121,7 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
             assert 'compiler' in str(error)
         assert (prefix / 'bin/simpleterm').read_text() == 'old simpleterm'
         assert (prefix / 'bin/simplewm').read_text() == 'old simplewm'
+        assert (prefix / 'bin/simplearcade').read_text() == 'local arcade build'
         assert ordinary.read_state()['phase'] == 'failed-recoverable'
         fail_wm = False
         builds.clear(); commands.clear()
@@ -112,6 +129,12 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
         assert builds == ['SimpleSuite', 'SimpleWM']
         assert (prefix / 'bin/simpleterm').read_text() == 'new simpleterm'
         assert (prefix / 'bin/simplewm').read_text() == 'new simplewm'
+        assert (prefix / 'bin/simplearcade').read_text() == 'updated arcade build'
+        assert (prefix / '.simpleupdate-previous/old/bin/simplearcade').read_text() == 'local arcade build'
+        owned = json.loads((prefix / 'share/simpleupdate/owned.json').read_text())
+        assert owned['bin/simplearcade'] == transaction.fingerprint(prefix / 'bin/simplearcade')
+        assert source_record.read_text() == '/usr/local/share/simplesuite/source\n'
+        assert legacy.installed_revision(local_manifest) == latest
         assert (prefix / 'bin/simpleupdate').read_text() == 'stable launcher'
         assert (prefix / 'share/simplewm/config').read_text() == 'personal system settings'
         assert (personal / 'book').read_text() == 'manuscript'
@@ -125,6 +148,10 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
         transaction.Transaction(prefix).rollback()
         assert (prefix / 'bin/simpleterm').read_text() == 'old simpleterm'
         assert (prefix / 'bin/simplewm').read_text() == 'old simplewm'
+        assert (prefix / 'bin/simplearcade').read_text() == 'local arcade build'
+        assert 'bin/simplearcade' not in json.loads((prefix / 'share/simpleupdate/owned.json').read_text())
+        assert local_manifest.read_text() == 'simplesuite_source_sha=' + original + '\nlocal_rebuild=yes\n'
+        assert source_record.read_text() == '/local/rebuild/source\n'
         state = ordinary.read_state()
         ordinary.persist(state, 'installing', component='APT')
         audit = 'a package has not been configured'

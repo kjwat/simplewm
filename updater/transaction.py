@@ -215,13 +215,17 @@ class Transaction:
         self.restore(state)
         self.recover()
 
-    def install(self, stages, verify, say=print, progress=lambda *args: None):
+    def install(self, stages, verify, say=print, progress=lambda *args: None, *, managed_paths=()):
         self.recover()
         if not self.ownership.is_file() or self.ownership.is_symlink():
             raise RuntimeError('packaged-file inventory is missing; ordinary source installation is blocked')
         owned = json.loads(self.ownership.read_text())
         if not isinstance(owned, dict):
             raise RuntimeError('invalid packaged-file inventory')
+        # The caller supplies the actual paths from authenticated component
+        # payloads, after provenance and staging checks. The old inventory is
+        # installation history, not a permanent limit on a growing suite.
+        managed_paths = frozenset(str(relative(path)) for path in managed_paths)
         self.directory.mkdir(mode=0o700); sync(self.prefix)
         incoming = self.directory / 'new'; incoming.mkdir()
         old = self.directory / 'old'; old.mkdir()
@@ -236,15 +240,22 @@ class Transaction:
                     parents(self.prefix, path)
                     before = fingerprint(target)
                     if before is not None and before != owned.get(text) and before != after:
-                        if text.startswith(('share/simplewm/', 'share/simplesuite/')):
+                        component_data = text.startswith(('share/simplewm/', 'share/simplesuite/'))
+                        provenance = component_data and path.parts[2] in (
+                            'install-manifest', 'install-source', 'source.bundle', 'source')
+                        if component_data and not provenance:
                             say('Preserving locally modified file: ' + str(target))
                             continue
                         if text not in owned:
-                            raise RuntimeError('unmanaged program conflicts with update: ' + str(target))
-                        # The inventory owns the path, not just one build's
-                        # bytes. Local rebuilds are backed up by this same
-                        # transaction and restored on failure or source rollback.
-                        say('Replacing locally rebuilt program (backup retained): ' + str(target))
+                            info = target.lstat()
+                            if (text not in managed_paths or info.st_uid != os.geteuid()
+                                    or (not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022)):
+                                raise RuntimeError('unmanaged program conflicts with update: ' + str(target))
+                            say('Including existing component file (backup retained): ' + str(target))
+                        else:
+                            # Ownership covers the path across local rebuilds;
+                            # recovery restores the exact build being replaced.
+                            say('Replacing locally rebuilt program (backup retained): ' + str(target))
                     if (incoming / path).exists() or (incoming / path).is_symlink():
                         raise RuntimeError('components have overlapping install paths: ' + text)
                     parents(incoming, path); copy_file(captured / path, incoming / path)

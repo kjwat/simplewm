@@ -95,3 +95,22 @@ with tempfile.TemporaryDirectory() as temporary:
     except RuntimeError as error:
         assert 'bashrc' in str(error)
 print('OK fresh images require SimplePlay, its core, SimpleTerm and their desktop assets')
+
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    source, payload = root / 'source', root / 'payload'
+    source.mkdir()
+    (source / 'Makefile').write_text('install-full:\n')
+    local = payload / 'usr/local'
+    data = local / 'share/simplesuite'; data.mkdir(parents=True)
+    (data / 'install-manifest').write_text('payload_scope=full\ninstalled_programs=simplearcade\n')
+    (local / 'bin').mkdir()
+    try:
+        prepare['verify_desktop_payload'](payload, source)
+        raise AssertionError('a newly included application was not checked')
+    except RuntimeError as error:
+        assert 'simplearcade' in str(error)
+    (local / 'bin/simplearcade').write_text('#!/bin/sh\n')
+    (local / 'bin/simplearcade').chmod(0o755)
+    prepare['verify_desktop_payload'](payload, source)
+print('OK complete Suite images verify new applications from generated installation output')

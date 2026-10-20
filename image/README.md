@@ -20,12 +20,13 @@ repositories and the dedicated signed Liquorix trixie source. Install the
 Liquorix image and headers metapackages, wlroots 0.18 runtime, Xwayland, Firefox
 ESR, git, GTK/VTE, PipeWire/WirePlumber, portals, and the helpers named in the
 project README. Keep the XFCE/Calamares live environment. Build/test/stage the
-official Suite in a separate Debian root using its upstream release gate,
-then stage SimpleTerm and SimplePlay with `install-simpleterm.sh --no-deps` and
-`install-simpleplay.sh --no-deps`, both using DESTDIR. Include `simpleplay-core`
+official Suite in a separate Debian root using `make full` and its upstream
+checks, then stage it with `make DESTDIR=PAYLOAD install-full`. This uses the
+Suite's complete installer and its generated installation receipt, including
+new applications, without an image-builder program list. Include `simpleplay-core`
 and the FFmpeg, SDL 2, libass, FluidSynth, libsidplayfp, JSON-GLib and SoundFont
 runtime packages. `simpleupdate` installs their build dependencies and stages
-both standalone applications when updating a system installed from an older ISO.
+the complete Suite payload when updating a system installed from an older ISO.
 
 Divert `/usr/lib/os-release` to `/usr/lib/os-release.debian` using dpkg-divert
 inside the staged image, then run `prepare-rootfs.py ROOTFS PAYLOAD SUITE_SOURCE`.
