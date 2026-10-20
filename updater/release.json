@@ -5,24 +5,24 @@
       "size": 3794
     },
     "legacy.py": {
-      "sha256": "ea9cde8fc223be0bef00c679114239f048044087ec0541faff81b877f4caabce",
-      "size": 76881
+      "sha256": "b6788e20f264b91ee8152da26c9563d4ec8fd69ed973a19735bf2ba621395ca6",
+      "size": 77292
     },
     "ordinary.py": {
-      "sha256": "91c05780398b9fdf25a1fc90e22aa815a4e8d4827d96ad5f986431a10bbb50d0",
-      "size": 15951
+      "sha256": "dd66173211d60ac4d75cab5aa72e4f9a74ada01acd09153b74f9a1fc3ab354c5",
+      "size": 16102
     },
     "simpleupdate-target": {
       "sha256": "1fd78bfac5b853f56cc72b9b43beb792926bef47e075b1fb101e71bb281c0992",
       "size": 4502
     },
     "transaction.py": {
-      "sha256": "9cbaa6a4309713a9a1f828ffb62ce0264ed71f36d77d99e7b7243b0878370a07",
-      "size": 14085
+      "sha256": "13da45546f9f10e1bfca4bfce644061d499f37809bec4dbd7ccef0fea494c974",
+      "size": 14963
     }
   },
   "format": 1,
   "protocol": 1,
-  "revision": "af510ba8fc56db10a635601a277777ca38da0111",
-  "version": 5
+  "revision": "cf668be4194378a6bf59a569ea31a0480c826149",
+  "version": 6
 }
