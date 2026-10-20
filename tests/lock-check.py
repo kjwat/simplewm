@@ -109,13 +109,11 @@ with tempfile.TemporaryDirectory(prefix='simplewm-lock-check-') as temporary:
     assert os.access(installed / 'bin/simplewm-lock-client', os.X_OK)
     assert not (installed / 'bin/simplewm-lock-preview').exists()
     run([installed / 'bin/simplewm-lock-client', '--version'])
-    # The unmodified original ISO updater must accept the REAL staged payload,
-    # including the lock client and release-upgrade helper, in its first run.
-    original_updater = subprocess.check_output(['git', '-C', str(repo), 'show',
-        '2781d08db503fd9d6db7ed46a8281ce7243d2b18:scripts/simpleupdate'], text=True)
-    original_module = {'__name__': 'original_iso_updater', '__file__': str(repo / 'scripts/simpleupdate')}
-    exec(compile(original_updater, 'original-iso-simpleupdate', 'exec'), original_module)
-    original_module['validate_local'](installed)
+    # The installed versioned updater validates the complete current payload,
+    # including its libexec engine. The historical r2 validator predates that
+    # payload format; bootstrap handoff is covered by update-handoff-check.py.
+    updater = runpy.run_path(str(repo / 'scripts/simpleupdate'))
+    updater['validate_local'](installed)
     for program in ('bin/simplewm', 'bin/simplewm-lock-client'):
         linkage = run(['ldd', installed / program], capture_output=True, text=True)
         assert 'not found' not in linkage.stdout

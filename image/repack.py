@@ -28,12 +28,17 @@ def main():
     parser.add_argument('media', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--reuse-squashfs', action='store_true', help='only after verifying rootfs is unchanged')
+    parser.add_argument('--ownership-pseudo', type=Path,
+                        help='verified ownership/modes/xattrs from this build base')
     args = parser.parse_args()
     base, root, media, output = [value.resolve() for value in (args.base_iso, args.rootfs, args.media, args.output)]
     if root == Path('/') or media == Path('/') or not (root / 'etc/calamares/settings.conf').exists():
         parser.error('expected disposable extracted SimpleOS staging trees')
     if not (media / 'isolinux/isolinux.bin').exists() or output == base:
         parser.error('missing extracted media or output would replace the base')
+    release = (root / 'usr/local/share/simpleos/VERSION').read_text().strip()
+    if not re.fullmatch(r'[0-9]+\.[0-9]+', release):
+        parser.error('expected the prepared SimpleOS release version')
     live = media / 'live'
     listing = subprocess.run(['xorriso', '-indev', str(base), '-find', '/live', '-type', 'f', '-exec', 'echo'],
                              capture_output=True, text=True, check=True).stdout
@@ -98,14 +103,14 @@ label live-basic
     append boot=live components nomodeset nosplash
 ''')
     menu = media / 'isolinux/menu.cfg'
-    menu.write_text(re.sub(r'menu title SimpleOS .* - the writing system',
-                          'menu title SimpleOS 0.8 - SimpleWM writing desk', menu.read_text()))
-    (media / '.disk/info').write_text('SimpleOS 0.8 SimpleWM - amd64 live/install image, Liquorix default\n')
+    menu.write_text(re.sub(r'(?m)^menu title SimpleOS [^\n]*$',
+                          f'menu title SimpleOS {release} - SimpleWM writing desk', menu.read_text()))
+    (media / '.disk/info').write_text(f'SimpleOS {release} SimpleWM - amd64 live/install image, Liquorix default\n')
     (media / '.disk/mkisofs').write_text('SimpleOS: original hybrid BIOS/UEFI boot layout replayed with xorriso; see SimpleWM image/repack.py\n')
     # Restore metadata lost by rootless extraction, retaining only existing paths.
     pseudo = media.parent / 'simplewm-ownership.pseudo'
     entries = []
-    for line in (HERE / 'base-ownership-and-xattrs.pseudo').read_text().splitlines():
+    for line in (args.ownership_pseudo or HERE / 'base-ownership-and-xattrs.pseudo').read_text().splitlines():
         if line.startswith('#') or not line.strip():
             continue
         path = root / line.split()[0]
@@ -141,7 +146,7 @@ label live-basic
     if temporary.exists():
         temporary.unlink()
     command = ['xorriso', '-indev', str(base), '-outdev', str(temporary), '-boot_image', 'any', 'replay',
-               '-volid', 'SIMPLEOS_0_8']
+               '-volid', 'SIMPLEOS_' + release.replace('.', '_')]
     # Remove obsolete versioned kernels from the base, including on repeat builds.
     if obsolete:
         command.extend(['-rm', *obsolete, '--'])

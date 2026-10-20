@@ -8,14 +8,14 @@ import tempfile
 
 prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'image/prepare-rootfs.py'))
 suite = dict(pair.split(':') for pair in '''
-browse:simplebrowse burn:simpleburn cal:simplecal clock:simpleclock
+browse:simplebrowse burn:simpleburn cal:simplecal change:simplechange clock:simpleclock
 files:simplefiles flac:simpleflac game:simplegame mail:simplemail
 news:simplenews note:simplenote pdf:simplepdf pod:simplepod
-radio:simpleradio save:simplesave stats:simplestats
+radio:simpleradio save:simplesave search:simplesearch stats:simplestats
 suite-uninstall:simplesuite-uninstall ver:simplever vis:simplevis words:simplewords
 net:simplenet blue:simpleblue vol:simplevol serve:simpleserve
 '''.split())
-expected = suite | dict(term='simpleterm', check='simplecheck', trident='simpletrident')
+expected = suite | dict(term='simpleterm', play='simpleplay', check='simplecheck', trident='simpletrident')
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp); binary = root / 'usr/local/bin'; binary.mkdir(parents=True)
     manifest = root / 'usr/local/share/simplesuite/command-abbreviations'
@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory() as temp:
     except RuntimeError as error:
         assert 'vol' in str(error)
     assert bashrc.read_text() == content
-print('OK all 26 shipped aliases, manifest additions, repeated builds, personal shell settings and missing-target rejection')
+print(f'OK all {len(expected)} shipped aliases, manifest additions, repeated builds, personal shell settings and missing-target rejection')
 
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
@@ -114,3 +114,32 @@ with tempfile.TemporaryDirectory() as temporary:
     (local / 'bin/simplearcade').chmod(0o755)
     prepare['verify_desktop_payload'](payload, source)
 print('OK complete Suite images verify new applications from generated installation output')
+
+with tempfile.TemporaryDirectory() as temporary:
+    import json
+    root = Path(temporary)
+    fixtures = {
+        'etc/skel/.Xresources': '! personal settings\nXft.dpi: 110\nXft.dpi: 96\n',
+        'etc/X11/Xresources/simpleos': 'Xft.dpi: 110\nXft.rgba: rgb\n',
+        'usr/local/bin/simpleos-display-setup': '#!/bin/sh\ndpi=110\n',
+        'usr/lib/firefox-esr/distribution/policies.json': json.dumps({'policies': {
+            'Preferences': {'browser.test.existing': {'Value': True, 'Status': 'default'}}}}),
+    }
+    for relative, content in fixtures.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    prepare['prepare_font_defaults'](root)
+    preferences = json.loads((root / 'usr/lib/firefox-esr/distribution/policies.json').read_text())['policies']['Preferences']
+    assert preferences['gfx.font_rendering.cleartype_params.pixel_structure'] == {
+        'Value': 1, 'Type': 'number', 'Status': 'default'}
+    assert preferences['layout.css.devPixelsPerPx'] == {
+        'Value': '1', 'Type': 'string', 'Status': 'default'}
+    assert preferences['browser.test.existing']['Value'] is True
+    assert (root / 'etc/skel/.config/environment.d/90-font-dpi.conf').read_text() == 'GDK_DPI_SCALE=1.083333\n'
+    assert (root / 'etc/skel/.Xresources').read_text() == '! personal settings\n\nXft.dpi: 104\n'
+    assert 'dpi=104' in (root / 'usr/local/bin/simpleos-display-setup').read_text()
+    before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    prepare['prepare_font_defaults'](root)
+    assert before == {str(path.relative_to(root)): path.read_bytes() for path in root.rglob('*') if path.is_file()}
+print('OK fresh-install butterfonts defaults, live DPI, exact Firefox preference types, preserved policies and repeated builds')

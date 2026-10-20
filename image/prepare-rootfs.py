@@ -6,12 +6,14 @@ Latest SimpleSuite must already be built into payload/usr/local.
 """
 import argparse
 import configparser
+import json
 from pathlib import Path
 import re
 import shlex
 import shutil
+from xml.sax.saxutils import escape
 
-RELEASE = '0.8'
+RELEASE = '1.0'
 SOURCE = Path(__file__).resolve().parent.parent
 
 def verify_desktop_payload(payload, suite_source):
@@ -62,7 +64,7 @@ def prepare_shell_aliases(root):
         if short in aliases and aliases[short] != full:
             raise RuntimeError(f'conflicting command abbreviation: {short}')
         aliases[short] = full
-    aliases.update(term='simpleterm', check='simplecheck', trident='simpletrident')
+    aliases.update(term='simpleterm', play='simpleplay', check='simplecheck', trident='simpletrident')
     for short, full in aliases.items():
         target = root / 'usr/local/bin' / full
         if not target.is_file() or not target.stat().st_mode & 0o111:
@@ -70,16 +72,73 @@ def prepare_shell_aliases(root):
     begin, end = '# BEGIN SimpleOS application aliases', '# END SimpleOS application aliases'
     block = begin + '\n' + ''.join(f'alias {short}={shlex.quote("/usr/local/bin/" + full)}\n'
                                   for short, full in sorted(aliases.items())) + end + '\n'
-    bashrc = root / 'etc/skel/.bashrc'
-    content = bashrc.read_text()
     pattern = re.compile(r'^' + re.escape(begin) + r'\n.*?^' + re.escape(end) + r'\n?', re.M | re.S)
-    if begin in content or end in content:
-        if len(pattern.findall(content)) != 1:
-            raise RuntimeError('expected one complete SimpleOS application alias block')
-        content = pattern.sub(lambda match: block, content)
-    else:
-        content = content.rstrip('\n') + '\n\n' + block
-    bashrc.write_text(content)
+    for relative in ('etc/skel/.bashrc', 'etc/bash.bashrc'):
+        bashrc = root / relative
+        if relative == 'etc/bash.bashrc' and not bashrc.exists():
+            continue
+        content = bashrc.read_text()
+        if begin in content or end in content:
+            if len(pattern.findall(content)) != 1:
+                raise RuntimeError('expected one complete SimpleOS application alias block')
+            content = pattern.sub(lambda match: block, content)
+        else:
+            content = content.rstrip('\n') + '\n\n' + block
+        bashrc.write_text(content)
+
+def prepare_font_defaults(root):
+    """Fresh installs inherit the user's tested butterfonts and Firefox setup."""
+    environment = root / 'etc/skel/.config/environment.d/90-font-dpi.conf'
+    environment.parent.mkdir(parents=True, exist_ok=True)
+    environment.write_text('GDK_DPI_SCALE=1.083333\n')
+    resources = root / 'etc/skel/.Xresources'
+    content = resources.read_text() if resources.exists() else ''
+    content = re.sub(r'(?m)^\s*Xft\.dpi\s*:.*\n?', '', content)
+    resources.write_text(content.rstrip('\n') + '\n\nXft.dpi: 104\n')
+    system_resources = root / 'etc/X11/Xresources/simpleos'
+    content, count = re.subn(r'(?m)^Xft\.dpi\s*:.*$', 'Xft.dpi: 104', system_resources.read_text())
+    if count != 1:
+        raise RuntimeError('expected one system Xft DPI setting')
+    system_resources.write_text(content)
+    display = root / 'usr/local/bin/simpleos-display-setup'
+    content, count = re.subn(r'(?m)^dpi=[0-9]+$', 'dpi=104', display.read_text())
+    if count != 1:
+        raise RuntimeError('expected one live display DPI setting')
+    display.write_text(content)
+    # Match the captured Ubuntu faces in the live installer as well as SimpleWM.
+    fonts = sorted((SOURCE / 'fonts').glob('*.ttf'))
+    if len(fonts) != 4:
+        raise RuntimeError('expected the four captured Ubuntu font faces')
+    paths = ['/usr/local/share/simplewm/fonts/' + font.name for font in fonts]
+    accepted = ''.join('<pattern><patelt name="file"><string>' + escape(path)
+                       + '</string></patelt></pattern>' for path in paths)
+    rejected = ''.join('<pattern><patelt name="family"><string>' + family
+                       + '</string></patelt></pattern>' for family in ('Ubuntu Sans', 'Ubuntu Sans Mono'))
+    fontconfig = root / 'etc/fonts/conf.d/65-simpleos-butterfonts.conf'
+    fontconfig.parent.mkdir(parents=True, exist_ok=True)
+    fontconfig.write_text('<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
+        '<fontconfig><dir>/usr/local/share/simplewm/fonts</dir><selectfont><acceptfont>'
+        + accepted + '</acceptfont><rejectfont>' + rejected + '</rejectfont></selectfont>\n'
+        '<match target="font">'
+        '<edit name="antialias" mode="assign"><bool>true</bool></edit>'
+        '<edit name="hinting" mode="assign"><bool>true</bool></edit>'
+        '<edit name="hintstyle" mode="assign"><const>hintslight</const></edit>'
+        '<edit name="autohint" mode="assign"><bool>false</bool></edit>'
+        '<edit name="rgba" mode="assign"><const>rgb</const></edit>'
+        '<edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>'
+        '</match></fontconfig>\n')
+    policy = root / 'usr/lib/firefox-esr/distribution/policies.json'
+    content = json.loads(policy.read_text())
+    preferences = content.setdefault('policies', {}).setdefault('Preferences', {})
+    for key, value in [('gfx.font_rendering.cleartype_params.pixel_structure', 1),
+                       ('layout.css.devPixelsPerPx', '1')]:
+        # Unknown numeric 0/1 preferences otherwise become booleans in Firefox
+        # policy handling; the user's pixel-structure setting must be an int.
+        preferences[key] = {'Value': value, 'Type': 'number' if isinstance(value, int) else 'string',
+                            'Status': 'default'}
+    policy.write_text(json.dumps(content, indent=2) + '\n')
+    for path in (environment, resources, system_resources, fontconfig, policy):
+        path.chmod(0o644)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -192,7 +251,7 @@ Updates: simpleupdate. The live medium keeps XFCE for Calamares.
         write('usr/local/share/simpleos/' + relative, (RELEASE if relative == 'VERSION' else revision[:12]) + '\n')
     write('usr/local/share/simpleos/simplesuite.commit', revision + '\n')
     write('usr/local/share/simpleos/SOURCES.lock', f'''SimpleOS {RELEASE}
-Base: SimpleOS 0.6-r1 ISO (unaltered BIOS/UEFI boot loaders and XFCE Calamares flow)
+Base: verified SimpleOS 0.8-r5 ISO (retained BIOS/UEFI boot loaders and XFCE Calamares flow)
 SimpleWM: 0.8.0, GPL-3.0, local source /usr/local/share/simplewm/source
 dwl protocol core: v0.7, 74e45c4014ae7048ecbb76eb6f54034b8b479480
 SimpleSuite official: https://github.com/kjwat/simplesuite.git
@@ -204,7 +263,15 @@ Custom commands/assets: /usr/local; user preferences/data remain in each home
 Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted without fontbomb
 ''')
     branding = root / 'etc/calamares/branding/simpleos/branding.desc'
-    branding.write_text(branding.read_text().replace('0.6-r1', RELEASE).replace('0.7-simplewm', RELEASE).replace('"#135BFF"', '"#536a5b"'))
+    content = branding.read_text().replace('"#135BFF"', '"#536a5b"')
+    for key, value in [('version', RELEASE), ('shortVersion', RELEASE),
+                       ('versionedName', 'SimpleOS ' + RELEASE),
+                       ('shortVersionedName', 'SimpleOS ' + RELEASE)]:
+        content, count = re.subn(r'^(  ' + key + r':)\s*.*$',
+                                lambda match: match[1] + ' "' + value + '"', content, flags=re.M)
+        if count != 1:
+            raise RuntimeError('expected one Calamares branding field: ' + key)
+    branding.write_text(content)
     for version in ('gtk-3.0', 'gtk-4.0'):
         settings = root / f'etc/skel/.config/{version}/settings.ini'
         if settings.exists():
@@ -226,6 +293,7 @@ Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted with
     with term.open('w') as out:
         cfg.write(out)
     prepare_shell_aliases(root)
+    prepare_font_defaults(root)
     live_setup = root / 'usr/local/bin/simpleos-live-session-setup'
     live_setup.write_text(live_setup.read_text().replace('installed dwm system', 'installed SimpleWM system')
                           .replace('-s SimpleOS', '-s Yaru-red-dark').replace('Ubuntu Sans Mono 13', 'Ubuntu Sans Mono 12'))

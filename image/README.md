@@ -1,6 +1,6 @@
 # Image build
 
-The build uses the downloaded SimpleOS 0.6-r1 ISO as its base. Debian package
+The SimpleOS 1.0 build uses the verified SimpleOS 0.8-r5 ISO as its base. Debian package
 versions are resolved through normal signed trixie repositories; no host
 programs or host configurations are installed or removed by this process.
 
@@ -46,7 +46,8 @@ use `source_digest` from `scripts/simpleupdate` instead. Generated build files a
 Git metadata do not belong in the source snapshot.
 
 The image builder generates all Bash application shortcuts from the staged
-Suite's `command-abbreviations`, plus `term`, `check`, and `trident`. It rejects
+Suite's `command-abbreviations`, plus `term`, `play`, `check`, and `trident`, in
+both the system Bash configuration and the new-user skeleton. It rejects
 missing executable targets instead of shipping incomplete aliases. Run
 `python3 tests/image-check.py`, `python3 tests/setup-check.py`,
 `python3 tests/update-check.py`, `python3 tests/update-logic-check.py`, and
@@ -56,6 +57,15 @@ diverged, and unrecorded installed histories are preserved. Suite updates also
 install a Git bundle so later comparisons retain the installed history.
 The offline source bundle
 must include `main`; setup explicitly checks out that branch.
+
+Fresh users inherit the tested butterfonts environment and 104 DPI Xresources;
+the live display helper uses the same DPI. System Fontconfig selects the bundled
+Ubuntu faces with slight hinting and RGB antialiasing, and SimpleTerm follows
+Ubuntu Sans Mono 12. Firefox policy defaults set integer
+`gfx.font_rendering.cleartype_params.pixel_structure=1` and string
+`layout.css.devPixelsPerPx="1"`. Explicit policy types preserve the numeric
+preference on Linux, where an unknown 0/1 preference would otherwise become a
+boolean. Personal browser profiles are never copied into release media.
 
 Before repacking a new-bootstrap image, stage both components with their source
 snapshots, Git bundles and manifests, and finalize the updater seed:
@@ -79,6 +89,9 @@ python3 image/repack.py ORIGINAL_ISO ROOTFS MEDIA OUTPUT_ISO
 
 This script accepts only extracted staging trees, never `/`. It preserves the
 original hybrid boot loaders, retains a Debian fallback live boot entry, and
-rebuilds all media checksums. Never put test VM passwords or validation SSH keys
+rebuilds all media checksums. Release branding and the volume ID come from the
+prepared image's `VERSION`. Rootless builds pass `--ownership-pseudo FILE`
+with ownership, privileged modes and capabilities verified against the actual
+base image; the older bundled metadata is historical. Never put test VM passwords or validation SSH keys
 into the image. See `../VALIDATION.md` for completed tests and remaining
 release validation.
