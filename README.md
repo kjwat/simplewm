@@ -24,7 +24,7 @@ sudo make install
 ```
 
 Runtime helpers use distro packages `swaybg swayidle swaylock fuzzel grim slurp
-wl-clipboard wlr-randr wlopm python3 python3-pil`. Simpleterm and Firefox are launched normally.
+wl-clipboard wlr-randr wlopm python3 python3-pil util-linux`. Simpleterm and Firefox are launched normally.
 Programs and assets install exclusively in `/usr/local`. `DESTDIR` permits
 staging; `make uninstall` removes only SimpleWM's own files, preserving user
 configuration. The build produces `build/simplewm`; generated binaries stay

@@ -1,15 +1,21 @@
 #!/bin/sh
 set -eu
 case "${1:-region}" in
-    region) region=$(slurp) || exit 0 ;;
-    full) region= ;;
+    region|full) mode=${1:-region} ;;
     *) printf '%s\n' 'Usage: simplewm-screenshot [region|full]' >&2; exit 2 ;;
 esac
+# Ignore repeated hotkeys while a capture is active, without queuing selectors.
+display=${WAYLAND_DISPLAY:-wayland-0}
+exec 9>"${XDG_RUNTIME_DIR:?}/simplewm-screenshot-${display##*/}.lock"
+flock -n 9 || exit 0
+region=
+if [ "$mode" = region ]; then region=$(slurp) || exit 0; fi
 pictures=$(xdg-user-dir PICTURES 2>/dev/null || printf '%s/Pictures' "$HOME")
 folder=$pictures/Screenshots
 mkdir -p "$folder"
 target=$(mktemp "$folder/$(date +%Y-%m-%d_%H-%M-%S)-XXXXXX.png")
 trap 'rm -f "$target"' HUP INT TERM
 if [ -n "$region" ]; then grim -g "$region" "$target"; else grim "$target"; fi
-wl-copy --type image/png < "$target"
+# The background clipboard owner must not keep the capture lock alive.
+wl-copy --type image/png 9>&- < "$target"
 notify-send -a SimpleWM -t 2500 'Screenshot copied' "Saved to $target" 2>/dev/null || true
