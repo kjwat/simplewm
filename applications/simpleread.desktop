@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleRead
+GenericName=Terminal document reader
+Exec=simpleterm -e simpleread %f
+TryExec=simpleread
+Icon=utilities-terminal
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/epub+zip;application/x-mobipocket-ebook;application/vnd.amazon.ebook;
+Keywords=read;ebook;epub;kindle;

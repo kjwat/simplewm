@@ -215,7 +215,7 @@ class Transaction:
         self.restore(state)
         self.recover()
 
-    def install(self, stages, verify, say=print, progress=lambda *args: None, *, managed_paths=()):
+    def install(self, stages, verify, say=print, progress=lambda *args: None, *, managed_paths=(), retired_paths=()):
         self.recover()
         if not self.ownership.is_file() or self.ownership.is_symlink():
             raise RuntimeError('packaged-file inventory is missing; ordinary source installation is blocked')
@@ -262,12 +262,30 @@ class Transaction:
                     owned[text] = after
                     if before != after:
                         state['files'].append({'path': text, 'before': before, 'after': after})
+            # A verified full component payload can explicitly retire renamed
+            # files. Only exact previously owned bytes qualify; personal or
+            # locally edited files remain untouched. Retirements use the same
+            # durable backup/journal as replacements, including rollback.
+            for text in sorted(set(retired_paths)):
+                path = relative(text)
+                if text in managed_paths or (incoming / path).exists():
+                    raise RuntimeError('retired path is also supplied by the update: ' + text)
+                if text not in owned:
+                    continue
+                parents(self.prefix, path)
+                before = fingerprint(self.prefix / path)
+                if before is not None and before != owned[text]:
+                    say('Preserving locally modified retired file: ' + str(self.prefix / path))
+                    continue
+                owned.pop(text)
+                if before is not None:
+                    state['files'].append({'path': text, 'before': before, 'after': None})
             # Ownership and component provenance are part of the same rollback.
             path = self.ownership.relative_to(self.prefix)
             parents(incoming, path); write_json(incoming / path, owned)
             state['files'].append({'path': str(path), 'before': fingerprint(self.ownership),
                                    'after': fingerprint(incoming / path)})
-            size = sum((incoming / item['path']).lstat().st_size for item in state['files'])
+            size = sum((incoming / item['path']).lstat().st_size for item in state['files'] if item['after'] is not None)
             size += sum((self.prefix / item['path']).lstat().st_size for item in state['files'] if item['before'])
             if shutil.disk_usage(self.prefix).free < size + RESERVE:
                 raise RuntimeError('not enough disk space for installation and recovery copies')
@@ -291,8 +309,12 @@ class Transaction:
                 target = self.prefix / path
                 if fingerprint(target) != item['before']:
                     raise RuntimeError('installed file changed during installation: ' + str(target))
-                os.replace(incoming / path, target)
-                sync(target.parent); sync((incoming / path).parent)
+                if item['after'] is None:
+                    target.unlink()
+                else:
+                    os.replace(incoming / path, target)
+                    sync((incoming / path).parent)
+                sync(target.parent)
                 progress('Installing', index, count)
             for item in state['files']:
                 if fingerprint(self.prefix / item['path']) != item['after']:

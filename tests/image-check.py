@@ -10,12 +10,13 @@ prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'image/prepar
 suite = dict(pair.split(':') for pair in '''
 browse:simplebrowse burn:simpleburn cal:simplecal change:simplechange clock:simpleclock
 files:simplefiles flac:simpleflac game:simplegame mail:simplemail
-news:simplenews note:simplenote pdf:simplepdf pod:simplepod
+news:simplenews note:simplenote read:simpleread pod:simplepod
 radio:simpleradio save:simplesave search:simplesearch stats:simplestats
 suite-uninstall:simplesuite-uninstall ver:simplever vis:simplevis words:simplewords
 net:simplenet blue:simpleblue vol:simplevol serve:simpleserve
 '''.split())
-expected = suite | dict(term='simpleterm', play='simpleplay', check='simplecheck', trident='simpletrident')
+suite.update(play='simpleplay', pdf='simplepdf')
+expected = suite | dict(term='simpleterm', check='simplecheck', trident='simpletrident')
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp); binary = root / 'usr/local/bin'; binary.mkdir(parents=True)
     manifest = root / 'usr/local/share/simplesuite/command-abbreviations'

@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=PDF Reader — simplepdf
-Exec=simpleterm -e simplepdf
-TryExec=simplepdf
-Icon=utilities-terminal
-Terminal=false
-Categories=Utility;
-Keywords=simplepdf;PDF Reader;

@@ -229,6 +229,7 @@ def run(update, args, log, version):
         with tempfile.TemporaryDirectory(prefix='simpleupdate-captured-', dir='/var/tmp') as captured:
             stages = []
             managed_paths = set()
+            retired_paths = set()
             progress.step(5, 'Building and checking programs' if plans else 'Programs are current')
             for index, plan in enumerate(plans):
                 if plan['component'] == 'SimpleWM':
@@ -245,6 +246,13 @@ def run(update, args, log, version):
                 manifest = local / 'share' / plan['component'].lower() / 'install-manifest'
                 if update.installed_revision(manifest, key) != plan['sha']:
                     raise RuntimeError('Staged component provenance does not match the requested source')
+                fields = dict(line.split('=', 1) for line in manifest.read_text().splitlines() if '=' in line)
+                # Only complete, verified component installations may retire
+                # old packaged paths. Partial builds cannot delete other apps.
+                if fields.get('payload_scope') == 'full':
+                    for name in fields.get('retired_paths', '').split():
+                        transaction.relative(name)
+                        retired_paths.add(name)
                 managed_paths.update(transaction.inventory(local))
                 stages.append(local)
             progress.step(6, 'Backing up and installing programs' if stages else 'No programs to install')
@@ -258,7 +266,7 @@ def run(update, args, log, version):
                         if update.installed_revision(manifest, key) != plan['sha']:
                             raise RuntimeError('Installed component provenance does not match its staged payload')
                 transaction.Transaction(update.PREFIX).install(
-                    stages, verify, update.say, progress.files, managed_paths=managed_paths)
+                    stages, verify, update.say, progress.files, managed_paths=managed_paths, retired_paths=retired_paths)
             else:
                 progress.step(7, 'Finishing update')
         reboot = REBOOT.exists()
