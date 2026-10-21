@@ -10,7 +10,7 @@ prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'image/prepar
 suite = dict(pair.split(':') for pair in '''
 browse:simplebrowse burn:simpleburn cal:simplecal change:simplechange clock:simpleclock
 files:simplefiles flac:simpleflac game:simplegame mail:simplemail
-news:simplenews note:simplenote simplebook:simplebook pod:simplepod
+news:simplenews note:simplenote book:simplebook pod:simplepod
 radio:simpleradio save:simplesave search:simplesearch stats:simplestats
 suite-uninstall:simplesuite-uninstall ver:simplever vis:simplevis words:simplewords
 net:simplenet blue:simpleblue vol:simplevol serve:simpleserve
