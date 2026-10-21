@@ -109,6 +109,14 @@ and checks that one plain invocation activates the new engine and completes the
 ordinary update. APT and compilation are fixtures; activation and file replacement
 are real. The bootstrap protocol and payload filenames remain unchanged.
 
+`tests/update-readers-check.py --stage SUITE_STAGE/usr/local` installs a real full
+Suite payload in a private prefix, verifies the native SimplePDF executable,
+embedded view and reader styles, launcher, and licenses, then checks failed
+verification and source rollback. Add `--previous-stage OLD_SUITE_STAGE/usr/local`
+to exercise an update from a previous native reader build instead of the ISO-era
+terminal readers. Both paths verify exact restoration of previous files and
+ownership. The default invocation retains the fast new-program/retirement fixture.
+
 `tests/update-installed-check.py --rootfs CACHED_ISO_ROOT --work-dir NEW_DIR`
 requires administrator authentication and Bubblewrap. It copies the rootfs,
 uses a test HTTPS release, installs the seed via the Makefile, performs
