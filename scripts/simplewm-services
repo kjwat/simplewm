@@ -1,5 +1,12 @@
 #!/bin/sh
 set -u
+# Xwayland is started lazily by the compositor, so Xsession never loads its
+# resources. Retain them when the last X11 application exits, too.
+if [ -n "${DISPLAY:-}" ] && command -v xrdb >/dev/null 2>&1; then
+    for resources in /etc/X11/Xresources/* "$HOME/.Xresources"; do
+        [ ! -f "$resources" ] || xrdb -retain -merge "$resources" 2>/dev/null || true
+    done
+fi
 dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY SIMPLEWM_SOCKET \
     XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION \
     XCURSOR_THEME XCURSOR_SIZE MOZ_ENABLE_WAYLAND GDK_DPI_SCALE 2>/dev/null || true

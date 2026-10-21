@@ -140,6 +140,55 @@ def prepare_font_defaults(root):
     for path in (environment, resources, system_resources, fontconfig, policy):
         path.chmod(0o644)
 
+def prepare_font_defaults(root):
+    """Bake butterfonts preferences into both the live and installed sessions."""
+    root = Path(root).resolve()
+    if root == Path('/') or not (root / 'etc/calamares/settings.conf').is_file():
+        raise RuntimeError('expected disposable SimpleOS image staging')
+
+    def write(relative, text):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o644)
+
+    # PAM reads /etc/environment for LightDM and console logins; environment.d
+    # also supplies user services. The skeleton carries the script's exact files.
+    for relative in ('etc/environment', 'etc/environment.d/90-font-dpi.conf',
+                     'etc/skel/.config/environment.d/90-font-dpi.conf'):
+        path = root / relative
+        text = path.read_text() if path.exists() else ''
+        text = re.sub(r'(?m)^[ \t]*(?:export[ \t]+)?GDK_DPI_SCALE[ \t]*=.*\n?', '', text)
+        write(relative, text.rstrip('\n') + ('\n' if text.strip() else '')
+              + 'GDK_DPI_SCALE=1.083333\n')
+
+    for relative in ('etc/X11/Xresources/simpleos', 'etc/skel/.Xresources'):
+        path = root / relative
+        text = path.read_text() if path.exists() else ''
+        text = re.sub(r'(?m)^[ \t]*Xft\.dpi[ \t]*:.*\n?', '', text)
+        write(relative, text.rstrip('\n') + '\nXft.dpi: 104\n')
+
+    # XFCE's XSettings daemon otherwise overrides the Xresources at live login.
+    path = root / 'etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml'
+    text = path.read_text()
+    text, count = re.subn(r'(<property name="DPI" type="int" value=")\d+("/>)',
+                          r'\g<1>104\2', text)
+    if count != 1:
+        raise RuntimeError('expected one XFCE DPI setting')
+    path.write_text(text)
+    path = root / 'etc/skel/.xsettingsd'
+    text = path.read_text()
+    text, count = re.subn(r'(?m)^Xft/DPI[ \t]+\d+$', 'Xft/DPI 106496', text)
+    if count != 1:
+        raise RuntimeError('expected one XSettings DPI setting')
+    path.write_text(text)
+    path = root / 'usr/local/bin/simpleos-live-session-setup'
+    text = path.read_text()
+    text, count = re.subn(r'(-p /Xft/DPI -s )\d+', r'\g<1>104', text)
+    if count != 1:
+        raise RuntimeError('expected one live-session DPI setting')
+    path.write_text(text)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('rootfs', type=Path)
@@ -297,6 +346,7 @@ Wallpaper palette engine: user-supplied wallpaper-theme-dwm.sh 3.8, adapted with
     live_setup = root / 'usr/local/bin/simpleos-live-session-setup'
     live_setup.write_text(live_setup.read_text().replace('installed dwm system', 'installed SimpleWM system')
                           .replace('-s SimpleOS', '-s Yaru-red-dark').replace('Ubuntu Sans Mono 13', 'Ubuntu Sans Mono 12'))
+    prepare_font_defaults(root)
     wallpaper = root / 'usr/local/bin/simpleos-default-wallpaper'
     wallpaper.write_text(wallpaper.read_text().replace('/usr/share/backgrounds/simpleos/', '/usr/local/share/backgrounds/simpleos/'))
     # The pre-existing battery policy is also a SimpleOS-owned executable.

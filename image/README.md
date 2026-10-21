@@ -38,6 +38,12 @@ Yaru themes/cursor and their licenses, and the original wallpaper under
 `/usr/local/share`. Compile dconf defaults and refresh the font cache inside
 the staged root. Keep machine-id empty and omit SSH host keys, private data,
 Tailscale identities, apt archives, temporary runtime files and build artifacts.
+Image preparation installs the butterfonts scale (`GDK_DPI_SCALE=1.083333`) in
+PAM's `/etc/environment`, system and skeleton `environment.d` files, and sets
+104 DPI in both Xresources and XFCE/XSettings defaults. The live-session
+initializer must use the same DPI. SimpleWM's startup services load and retain
+system and user Xresources for its lazy Xwayland server; copying `.Xresources`
+alone does not apply those settings to a Wayland login.
 Copy the clean WM source to `/usr/local/share/simplewm/source` and record its
 published Git commit as `simplewm_source_sha` in
 `/usr/local/share/simplewm/install-manifest`, alongside
