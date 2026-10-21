@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=SimpleRead
+Name=SimpleBook
 GenericName=Terminal document reader
-Exec=simpleterm -e simpleread %f
-TryExec=simpleread
+Exec=simpleterm -e simplebook %f
+TryExec=simplebook
 Icon=utilities-terminal
 Terminal=false
 Categories=Office;Viewer;
