@@ -12,7 +12,7 @@ wrapped = [
     'wlr_seat_pointer_notify_enter', 'wlr_seat_pointer_notify_motion',
     'wlr_relative_pointer_manager_v1_send_relative_motion',
     'wlr_idle_notifier_v1_notify_activity', 'wlr_cursor_set_xcursor',
-    'wlr_pointer_constraint_v1_send_activated',
+    'wlr_cursor_set_surface', 'wlr_pointer_constraint_v1_send_activated',
 ]
 with tempfile.TemporaryDirectory(prefix='simplewm-motion-') as temp:
     root = Path(temp)
@@ -26,7 +26,11 @@ from gi.repository import Gtk
 window = Gtk.Window(title=sys.argv[1])
 window.set_decorated(False)
 window.set_default_size(280, 180)
-window.add(Gtk.DrawingArea())
+text = Gtk.TextView()
+text.get_buffer().set_text('Screenshot drags must not select this text.\\n' * 12)
+scroll = Gtk.ScrolledWindow()
+scroll.add(text)
+window.add(scroll)
 window.show_all()
 Gtk.main()
 ''')

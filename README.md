@@ -342,5 +342,8 @@ and regenerating the media manifests. See `image/README.md` for exact inputs.
 `tests/config-check.py` exercises validation, includes, bounds, and failures.
 `tests/session-check.py` runs real GTK Wayland windows, virtual keyboard input,
 clipboard, layouts, maximize/restore, workspaces, reload, and Xwayland against
-the compositor. `VALIDATION.md` records completed checks and the image's
+the compositor. `make check-screenshot` checks a real Slurp selector's crosshair
+and immediate click/drag without prior pointer movement, cancellation, focus
+restoration, repeated hotkeys, and clipboard lock release.
+`VALIDATION.md` records completed checks and the image's
 remaining validation work.

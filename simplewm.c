@@ -831,6 +831,8 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+	/* A newly mapped overlay must receive the first click without motion. */
+	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
 void
@@ -978,7 +980,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
 	l->type = LayerShell;
-	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
 	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
@@ -986,6 +987,8 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->mon = layer_surface->output->data;
 	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
 	l->scene = l->scene_layer->tree;
+	/* Refresh focus only after the scene has applied the committed surface. */
+	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
 	l->scene->node.data = l->popups->node.data = l;

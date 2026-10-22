@@ -70,7 +70,7 @@ check-gestures: all
 	python3 tests/gestures-check.py
 check-motion: all
 	python3 tests/motion-check.py
-check-screenshot:
+check-screenshot: check-motion
 	python3 tests/screenshot-check.py
 clean:
 	rm -rf $(BUILD)

@@ -3,9 +3,11 @@
 #include "simplewm.c"
 #undef main
 #include <assert.h>
+#include <fcntl.h>
 #include <wlr/interfaces/wlr_pointer.h>
 
 static struct wlr_pointer pointer;
+static unsigned selector_cursors;
 static struct {
 	unsigned motion, relative, idle, defaults, activated;
 	struct wlr_surface *surface;
@@ -67,7 +69,20 @@ __wrap_wlr_cursor_set_xcursor(struct wlr_cursor *cur, struct wlr_xcursor_manager
 {
 	if (!strcmp(name, "default"))
 		sent.defaults++;
+	if (!strcmp(name, "crosshair"))
+		selector_cursors++;
 	__real_wlr_cursor_set_xcursor(cur, manager, name);
+}
+
+void __real_wlr_cursor_set_surface(struct wlr_cursor *, struct wlr_surface *, int32_t, int32_t);
+void
+__wrap_wlr_cursor_set_surface(struct wlr_cursor *cur, struct wlr_surface *surface,
+		int32_t hotspot_x, int32_t hotspot_y)
+{
+	if (surface && toplevel_from_wlr_surface(seat->pointer_state.focused_surface,
+			NULL, NULL) == LayerShell)
+		selector_cursors++;
+	__real_wlr_cursor_set_surface(cur, surface, hotspot_x, hotspot_y);
 }
 
 /* Constraints use real mapped surfaces and region math; only the protocol
@@ -176,6 +191,66 @@ static void
 current(Client *c)
 {
 	delivered(c, cursor->x - c->geom.x - c->bw, cursor->y - c->geom.y - c->bw);
+}
+
+static void
+selectregion(Client *under, int cancel)
+{
+	int result[2];
+	assert(!pipe2(result, O_CLOEXEC | O_NONBLOCK));
+	warp(150, 150);
+	assert(seat->pointer_state.focused_surface == client_surface(under));
+	unsigned before = selector_cursors;
+	pid_t child = fork();
+	assert(child >= 0);
+	if (!child) {
+		int input = open("/dev/null", O_RDONLY);
+		assert(input >= 0 && dup2(input, STDIN_FILENO) >= 0);
+		assert(dup2(result[1], STDOUT_FILENO) >= 0);
+		execlp("slurp", "slurp", NULL);
+		_exit(127);
+	}
+	close(result[1]);
+	/* Do not move the pointer: the mapped overlay must take focus and set its
+	 * crosshair before the first click, even over selectable application text. */
+	for (int i = 0; i < 500 && selector_cursors == before; i++)
+		pump();
+	assert(selector_cursors > before && "selector did not set its cursor without motion");
+	assert(toplevel_from_wlr_surface(seat->pointer_state.focused_surface,
+			NULL, NULL) == LayerShell);
+	near(cursor->x, 150);
+	near(cursor->y, 150);
+	if (cancel) {
+		struct wlr_pointer_button_event event = {
+			.pointer = &pointer, .time_msec = 100, .button = BTN_RIGHT,
+			.state = WL_POINTER_BUTTON_STATE_PRESSED,
+		};
+		wl_signal_emit_mutable(&pointer.events.button, &event);
+		event.state = WL_POINTER_BUTTON_STATE_RELEASED;
+		wl_signal_emit_mutable(&pointer.events.button, &event);
+	} else {
+		button(WL_POINTER_BUTTON_STATE_PRESSED);
+		relative(100, 100, 60);
+		assert(toplevel_from_wlr_surface(seat->pointer_state.focused_surface,
+				NULL, NULL) == LayerShell);
+		button(WL_POINTER_BUTTON_STATE_RELEASED);
+	}
+	wl_signal_emit_mutable(&pointer.events.frame, NULL);
+	char geometry[64] = {0};
+	ssize_t size = -1;
+	for (int i = 0; i < 500 && size < 0; i++) {
+		pump();
+		size = read(result[0], geometry, sizeof(geometry) - 1);
+		assert(size >= 0 || errno == EAGAIN || errno == EINTR);
+	}
+	assert(size >= 0 && "selector did not finish");
+	assert(cancel ? size == 0 : !strcmp(geometry, "150,150 101x61\n"));
+	close(result[0]);
+	for (int i = 0; i < 500 &&
+			seat->pointer_state.focused_surface != client_surface(under); i++)
+		pump();
+	assert(seat->pointer_state.focused_surface == client_surface(under));
+	assert(cursor_mode == CurNormal && !seat->pointer_state.button_count);
 }
 
 int
@@ -388,5 +463,9 @@ main(int argc, char **argv)
 	wl_list_remove(&constraint.link);
 	pixman_region32_fini(&constraint.region);
 	puts("OK interactive move/resize, locked-constraint bypass, drag icon and monitor selection");
+	place(a, (struct wlr_box){100, 100, 300, 200});
+	selectregion(a, 0);
+	selectregion(a, 1);
+	puts("OK real slurp crosshair before motion, immediate click/drag selection, cancellation and pointer restoration");
 	return 0;
 }
