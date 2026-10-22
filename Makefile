@@ -68,8 +68,10 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/simpleupdate-target $(DESTDIR)$(PREFIX)/bin/simplewm-lock-client
 check-gestures: all
 	python3 tests/gestures-check.py
+check-motion: all
+	python3 tests/motion-check.py
 check-screenshot:
 	python3 tests/screenshot-check.py
 clean:
 	rm -rf $(BUILD)
-.PHONY: all install install-fonts uninstall clean lock-preview check-gestures check-screenshot
+.PHONY: all install install-fonts uninstall clean lock-preview check-gestures check-motion check-screenshot
