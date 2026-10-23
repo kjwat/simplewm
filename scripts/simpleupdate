@@ -51,6 +51,13 @@ LEGACY_SUITE_RELEASES = {
         'local-141bf55d98eac6e060a9c9b5fdb5fa39a77d4bf7a0b4108d5c792d434a791091',
         'b1b1d74d3fecd364b5597983e8761e08a044701d'),
 }
+# The SimpleOS 1.0 ISO records its bundled WM as a local snapshot. Its
+# Xresources/session fixes are included in this published successor. Recognize
+# only the exact shipped source; edited and unknown local builds stay local.
+LEGACY_WM_RELEASES = {
+    'local-5cb66c55d3b3730a0d3e6b122156d323d211a3df80853071fbde3bfdb92a2ec3':
+        'ea715bb1994d11e3c0ba46280fdefc1416342609',
+}
 BUILD_PACKAGES = [
     'build-essential', 'pkg-config', 'git', 'ca-certificates', 'libncurses-dev',
     'libcurl4-openssl-dev', 'libssl-dev', 'libavahi-client-dev', 'libnm-dev',
@@ -633,6 +640,9 @@ def published_update_allowed(component, source, sha, current, env, demote):
     if not current or current == sha:
         return True
     if current.startswith('local-'):
+        if component == 'SimpleWM' and legacy_wm_update_allowed(source, sha, current, env, demote):
+            say('SimpleWM: verified the original 1.0 ISO source snapshot; upgrading to its published successor')
+            return True
         say(f'{component}: preserving the explicitly installed local source')
         return False
     opts = dict(env=env, preexec_fn=demote)
@@ -754,6 +764,24 @@ def legacy_suite_update_allowed(source, sha, current, env, demote):
     present.check_returncode()
     result = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', base, sha],
                             capture_output=True, text=True, env=env, preexec_fn=demote)
+    if result.returncode not in (0, 1):
+        result.check_returncode()
+    return result.returncode == 0
+
+def legacy_wm_update_allowed(source, sha, current, env, demote):
+    base = LEGACY_WM_RELEASES.get(current)
+    snapshot = PREFIX / 'share/simplewm/source'
+    if not base or not snapshot.is_dir() or snapshot.is_symlink():
+        return False
+    if source_digest(snapshot) != current:
+        return False
+    opts = dict(env=env, preexec_fn=demote, capture_output=True, text=True)
+    present = subprocess.run(['git', '-C', str(source), 'rev-parse', '--verify', '--quiet', base + '^{commit}'],
+                             **opts)
+    if present.returncode == 1:
+        return False
+    present.check_returncode()
+    result = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', base, sha], **opts)
     if result.returncode not in (0, 1):
         result.check_returncode()
     return result.returncode == 0

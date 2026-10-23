@@ -180,6 +180,44 @@ with tempfile.TemporaryDirectory() as temp:
         if changed:
             assert 'verified the original 0.8 source snapshot' in output
         count += 1
+    # The 1.0 ISO's exact local WM snapshot may advance to its published
+    # successor. An edited, unknown, absent or linked snapshot is still local;
+    # neither an older nor a divergent published history may replace it.
+    for case, published, changed in (
+            ('matching', newer, True),
+            ('modified', newer, False),
+            ('unknown', newer, False),
+            ('missing', newer, False),
+            ('symlink', newer, False),
+            ('missing-ancestor', newer, False),
+            ('older', old, False),
+            ('divergent', divergent, False)):
+        prefix, work = prepare('legacy-wm-' + case, bundle=False)
+        snapshot = prefix / 'share/simplewm/source'; snapshot.mkdir()
+        (snapshot / 'config').write_text('original 1.0 session fixes')
+        expected = update.source_digest(snapshot)
+        current = 'local-' + '0' * 64 if case == 'unknown' else expected
+        manifest = prefix / 'share/simplewm/install-manifest'
+        manifest.write_text('simplewm_source_sha=' + current + '\n')
+        if case == 'modified':
+            (snapshot / 'config').write_text('personal local session changes')
+        elif case == 'missing':
+            (snapshot / 'config').unlink(); snapshot.rmdir()
+        elif case == 'symlink':
+            target = prefix / 'linked-source'
+            snapshot.rename(target); snapshot.symlink_to(target, target_is_directory=True)
+        git('-C', upstream, 'update-ref', 'refs/heads/main', published)
+        build_calls.clear()
+        base = 'd' * 40 if case == 'missing-ancestor' else installed
+        with patch.object(update, 'LEGACY_WM_RELEASES', {expected: base}):
+            output = invoke('simplewm', prefix, work)
+        assert len(build_calls) == int(changed), (case, output)
+        assert update.installed_revision(manifest, 'simplewm_source_sha') == (newer if changed else current)
+        assert (prefix / 'bin/program').read_text() == (
+            git('-C', upstream, 'show', newer + ':config') if changed else 'working installed release')
+        if changed:
+            assert 'verified the original 1.0 ISO source snapshot' in output
+        count += 1
     # A corrupted fetched commit must fail the actual fsck before checkout.
     source = root / 'damaged-fetch'
     def damage_after_fetch(args, **kwargs):

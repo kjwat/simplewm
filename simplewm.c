@@ -159,6 +159,7 @@ typedef struct {
 	int ismaximized, restore_floating;
 	struct wlr_box restore_geom;
 	uint32_t resize; /* configure serial of a pending resize */
+	int resize_interactive;
 } Client;
 
 typedef struct {
@@ -676,6 +677,10 @@ buttonpress(struct wl_listener *listener, void *data)
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
 			wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 			cursor_mode = CurNormal;
+			/* Send the final target immediately, even if an older redraw is
+			 * outstanding. Keep its geometry with the buffer until it commits. */
+			if (grabc->resize_interactive)
+				resize(grabc, grabc->geom, 1);
 			/* Drop the window off on its new monitor */
 			selmon = xytomon(cursor->x, cursor->y);
 			setmon(grabc, selmon, 0);
@@ -859,12 +864,12 @@ commitnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
+	/* An acknowledgement alone is not a redraw. Retire the request only
+	 * when its serial (or a later one) accompanies a surface commit. */
+	if (c->resize && (int32_t)(c->surface.xdg->current.configure_serial - c->resize) >= 0)
+		c->resize = 0;
 	if (client_surface(c)->mapped && c->mon)
 		resize(c, c->geom, (c->isfloating && !c->isfullscreen));
-
-	/* mark a pending resize as completed */
-	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
-		c->resize = 0;
 }
 
 void
@@ -2308,25 +2313,46 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	bbox = interact ? &sgeom : &c->mon->w;
 
-	client_set_bounds(c, geo.width, geo.height);
 	c->geom = geo;
 	applybounds(c, bbox);
+	/* wlroots replaces unsent sizes in its existing idle configure batch.
+	 * Keep the newest target available without adding a frame or ack wait. */
+	client_set_bounds(c, c->geom.width, c->geom.height);
+	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
+			c->geom.height - 2 * c->bw);
+	if (!c->isfloating || c->isfullscreen || c->ismaximized || client_is_x11(c))
+		c->resize_interactive = 0;
+	else if (cursor_mode == CurResize && grabc == c)
+		c->resize_interactive = 1;
+
+	if (c->resize_interactive) {
+		/* geom is the newest pointer target. Present the size of the actual
+		 * window geometry until its replacement buffer is committed. */
+		client_get_geometry(c, &geo);
+		geo.width += 2 * c->bw;
+		geo.height += 2 * c->bw;
+		if (!(cursor_mode == CurResize && grabc == c) && !c->resize) {
+			c->geom.width = geo.width;
+			c->geom.height = geo.height;
+			c->resize_interactive = 0;
+		}
+	} else {
+		geo = c->geom;
+	}
 
 	/* Update scene-graph, including borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
+	wlr_scene_rect_set_size(c->border[0], geo.width, c->bw);
+	wlr_scene_rect_set_size(c->border[1], geo.width, c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, geo.height - 2 * c->bw);
+	wlr_scene_rect_set_size(c->border[3], c->bw, geo.height - 2 * c->bw);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, geo.height - c->bw);
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
-
-	/* this is a no-op if size hasn't changed */
-	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
-			c->geom.height - 2 * c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, geo.width - c->bw, c->bw);
 	client_get_clip(c, &clip);
+	clip.width = geo.width - c->bw;
+	clip.height = geo.height - c->bw;
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
 }
 
@@ -2866,6 +2892,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
+	c->resize = 0;
+	c->resize_interactive = 0;
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;

@@ -44,6 +44,15 @@ Generated install manifests, source-location records, source snapshots and Git
 bundles advance with the programs; they are installation metadata, not personal
 configuration. Their previous contents are retained by the same transaction.
 
+Updater 8 recognizes the exact SimpleOS 1.0 ISO's bundled WM snapshot, recorded
+as `local-5cb66c55d3b3730a0d3e6b122156d323d211a3df80853071fbde3bfdb92a2ec3`.
+It verifies the installed source bytes and requires the published update to
+descend from `ea715bb1994d11e3c0ba46280fdefc1416342609`, which includes that
+image's session fixes. This allows a fresh installation to receive later
+compositor changes through plain `simpleupdate`. Edited or unrecognized local
+sources, and older or divergent published histories, remain preserved. Future
+images should record their published Git revision and bundle as described below.
+
 Current Suite sources provide `make full`, `make test-full` and
 `make DESTDIR=STAGE install-full`. The updater calls that complete installation
 interface, then inventories what it actually staged. New applications and their

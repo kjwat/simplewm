@@ -41,6 +41,13 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
     for component in ('simplesuite', 'simplewm'):
         data = prefix / 'share' / component; data.mkdir(parents=True)
         (data / 'install-manifest').write_text(component + '_source_sha=' + original + '\n')
+    # Start WM selection from the exact ISO-style local snapshot. The first
+    # grouped update must publish its provenance; repeats then use Git ancestry.
+    wm_snapshot = prefix / 'share/simplewm/source'; wm_snapshot.mkdir()
+    (wm_snapshot / 'release').write_text('original')
+    wm_original = legacy.source_digest(wm_snapshot)
+    wm_manifest = prefix / 'share/simplewm/install-manifest'
+    wm_manifest.write_text('simplewm_source_sha=' + wm_original + '\n')
     (prefix / 'share/simpleupdate').mkdir()
     (prefix / 'bin').mkdir()
     for name in ('simpleterm', 'simplewm'):
@@ -103,6 +110,7 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
         patch.object(legacy, 'PREFIX', prefix),
         patch.object(legacy, 'MANIFEST', prefix / 'share/simplesuite/install-manifest'),
         patch.object(legacy, 'WM_MANIFEST', prefix / 'share/simplewm/install-manifest'),
+        patch.object(legacy, 'LEGACY_WM_RELEASES', {wm_original: original}),
         patch.object(legacy, 'debian_release', return_value=(13, 'trixie')),
         patch.object(legacy, 'apt_source_changes', return_value={}),
         patch.object(legacy, 'write_apt_sources'), patch.object(legacy, 'refresh_apt'),
@@ -121,6 +129,7 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
             assert 'compiler' in str(error)
         assert (prefix / 'bin/simpleterm').read_text() == 'old simpleterm'
         assert (prefix / 'bin/simplewm').read_text() == 'old simplewm'
+        assert legacy.installed_revision(wm_manifest, 'simplewm_source_sha') == wm_original
         assert (prefix / 'bin/simplearcade').read_text() == 'local arcade build'
         assert ordinary.read_state()['phase'] == 'failed-recoverable'
         fail_wm = False
@@ -129,6 +138,7 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
         assert builds == ['SimpleSuite', 'SimpleWM']
         assert (prefix / 'bin/simpleterm').read_text() == 'new simpleterm'
         assert (prefix / 'bin/simplewm').read_text() == 'new simplewm'
+        assert legacy.installed_revision(wm_manifest, 'simplewm_source_sha') == latest
         assert (prefix / 'bin/simplearcade').read_text() == 'updated arcade build'
         assert (prefix / '.simpleupdate-previous/old/bin/simplearcade').read_text() == 'local arcade build'
         owned = json.loads((prefix / 'share/simpleupdate/owned.json').read_text())
@@ -148,6 +158,7 @@ with tempfile.TemporaryDirectory(prefix='ordinary-check-') as temp:
         transaction.Transaction(prefix).rollback()
         assert (prefix / 'bin/simpleterm').read_text() == 'old simpleterm'
         assert (prefix / 'bin/simplewm').read_text() == 'old simplewm'
+        assert legacy.installed_revision(wm_manifest, 'simplewm_source_sha') == wm_original
         assert (prefix / 'bin/simplearcade').read_text() == 'local arcade build'
         assert 'bin/simplearcade' not in json.loads((prefix / 'share/simpleupdate/owned.json').read_text())
         assert local_manifest.read_text() == 'simplesuite_source_sha=' + original + '\nlocal_rebuild=yes\n'

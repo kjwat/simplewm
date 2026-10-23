@@ -354,9 +354,11 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 		return 0;
 	}
 #endif
-	if ((int32_t)width == c->surface.xdg->toplevel->current.width
-			&& (int32_t)height == c->surface.xdg->toplevel->current.height)
-		return 0;
+	/* The last request can still be in flight, including when reversing back
+	 * to the committed size. Keep its serial until a matching commit. */
+	if ((int32_t)width == c->surface.xdg->toplevel->scheduled.width
+			&& (int32_t)height == c->surface.xdg->toplevel->scheduled.height)
+		return c->resize;
 	return wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, (int32_t)width, (int32_t)height);
 }
 

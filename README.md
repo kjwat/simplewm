@@ -124,6 +124,12 @@ SimpleWM from `https://github.com/kjwat/simplewm.git`. No new package manager or
 automatic background updater is involved. Ordinary `apt update` and
 `apt full-upgrade` remain available for Debian and Liquorix.
 
+Interactive resize fixes are delivered through this source-update path.
+Updater 8 also recognizes the unmodified SimpleOS 1.0 ISO's bundled compositor,
+allowing a fresh installation to receive its published successor. Edited or
+unrecognized local source builds remain preserved. Log out and back in after
+updating to start the new compositor.
+
 Suite updates also build and stage SimplePlay, `simpleplay-core`, and SimpleTerm,
 including their desktop assets. The updater installs their media development
 libraries and MIDI SoundFont before building. An installation from an older ISO
