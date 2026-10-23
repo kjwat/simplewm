@@ -5,8 +5,8 @@
       "size": 3794
     },
     "legacy.py": {
-      "sha256": "1ef45063aae8f10b86f78bc52a5c904fb07eb1bf70e1ccb49ed8c6564791bcf8",
-      "size": 77325
+      "sha256": "d7cefc5a0546705262be76b65dba43bf17ee9d741ef8473779a232415de87995",
+      "size": 78777
     },
     "ordinary.py": {
       "sha256": "7e060f0162718488d859462f912d1c9587afb3578529516a78820c0b4df67260",
@@ -23,6 +23,6 @@
   },
   "format": 1,
   "protocol": 1,
-  "revision": "208c48a6bf994f3b4e770162da628ca2cc3ccad7",
-  "version": 7
+  "revision": "b135e9500e31df621668f16d830e5d46b6c18cda",
+  "version": 8
 }
