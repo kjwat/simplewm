@@ -181,3 +181,32 @@ checks verify that the ISO-style local manifest advances to a published SHA,
 unchanged repeats skip builds, and rollback restores the original manifest.
 The motion fixture's slurp selection assertion failed once with checks running
 concurrently; its standalone rerun passed. No change to that fixture was made.
+
+Pixel sampling, 2026-10-24
+--------------------------
+
+Surface buffers now use nearest sampling when an aligned source pixel maps
+exactly to one physical output pixel on every intersecting output. Actual
+scaling, fractional source crops, transformed buffers and mixed output scales
+retain bilinear filtering. Surface commits, independently updating subsurfaces
+and output changes refresh the selection; scene-node destruction releases its
+listeners. Configure tracking, resize synchronization, borders and clipping
+retain their existing behavior.
+
+The user tested the installed trial on the physical desktop and reported a
+clear improvement in appearance. Both the preceding build and trial preserve
+the controlled checkerboard exactly, so that fixture does not identify the
+original cause of the reported softening.
+
+Release checks passed `make all`, 22 configuration cases, the complete GLES2
+visual and resize fixtures, ordinary updater transactions and the shipped
+bootstrap handoff. Sampling coverage includes integer and fractional output
+scales, source crops, transformed buffers, independent subsurfaces and windows
+spanning different output scales. Resize trajectories retain 400 configures,
+zero duplicate requests and zero native border/buffer mismatch presentations.
+The staged compositor matches the user-tested trial byte for byte, and its
+updater 8 seed passes payload verification.
+
+Plain `simpleupdate` fetches the official repository's default branch for
+compositor sources. Publishing this change on `main` delivers it through the
+existing updater 8 engine; its separately versioned payload is unchanged.

@@ -17,7 +17,7 @@ parser.add_argument('--renderer', choices=['pixman', 'gles2'], default='pixman')
 parser.add_argument('--sanitize', action='store_true')
 parser.add_argument('--output', type=Path)
 parser.add_argument('--case', choices=['fullscreen', 'unplug_horizontal', 'unplug_vertical',
-                                     'unplug_offset', 'limits', 'stalled', 'x11'])
+                                     'unplug_offset', 'limits', 'stalled', 'x11', 'sampling'])
 args = parser.parse_args()
 source = args.source.resolve()
 fixture = Path(__file__).resolve().parent
@@ -28,6 +28,9 @@ with tempfile.TemporaryDirectory(prefix='simplewm-visual-run-') as temporary:
         'pkg-config', '--variable=pkgdatadir', 'wayland-protocols'], text=True).strip()) / 'stable/xdg-shell/xdg-shell.xml'
     subprocess.run(['wayland-scanner', 'client-header', str(protocol), str(root / 'resize-client-protocol.h')], check=True)
     subprocess.run(['wayland-scanner', 'private-code', str(protocol), str(root / 'resize-client-protocol.c')], check=True)
+    viewport = protocol.parents[2] / 'stable/viewporter/viewporter.xml'
+    subprocess.run(['wayland-scanner', 'client-header', str(viewport), str(root / 'sampling-viewport-client-protocol.h')], check=True)
+    subprocess.run(['wayland-scanner', 'private-code', str(viewport), str(root / 'sampling-viewport-client-protocol.c')], check=True)
     flags = shlex.split(subprocess.check_output([
         'pkg-config', '--cflags', '--libs', 'wlroots-0.18', 'wayland-server',
         'wayland-client', 'xkbcommon', 'libinput', 'xcb', 'xcb-icccm', 'pixman-1'], text=True))
@@ -40,14 +43,15 @@ with tempfile.TemporaryDirectory(prefix='simplewm-visual-run-') as temporary:
         '-Wno-unused-parameter', '-Wno-unused-function', '-DWLR_USE_UNSTABLE',
         '-DXWAYLAND', '-DVERSION="visual-test"', '-I' + str(source),
         '-I' + str(source / 'build'), '-I' + str(root), str(fixture / 'visual-check.c'),
-        str(source / 'util.c'), str(root / 'resize-client-protocol.c'), *flags,
+        str(source / 'util.c'), str(root / 'resize-client-protocol.c'),
+        str(root / 'sampling-viewport-client-protocol.c'), *flags,
         *instrumentation, *['-Wl,--wrap=' + name for name in wrappers],
         '-lm', '-o', str(executable),
     ], check=True)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     for case in ([args.case] if args.case else [
             'fullscreen', 'unplug_horizontal', 'unplug_vertical', 'unplug_offset',
-            'limits', 'stalled', 'x11']):
+            'limits', 'stalled', 'x11', 'sampling']):
         private = root / case
         private.mkdir()
         runtime = private / 'runtime'

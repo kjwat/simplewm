@@ -72,6 +72,7 @@
 #include <wlr/types/wlr_xdg_foreign_registry.h>
 #include <wlr/types/wlr_xdg_foreign_v1.h>
 #include <wlr/types/wlr_xdg_foreign_v2.h>
+#include <wlr/util/addon.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <xkbcommon/xkbcommon.h>
@@ -384,6 +385,7 @@ static void unlocksession(struct wl_listener *listener, void *data);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
 static void updatemons(struct wl_listener *listener, void *data);
+static void tracksampling(struct wlr_scene_node *node);
 static void updatescene(Client *c);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
@@ -901,6 +903,7 @@ commitpopup(struct wl_listener *listener, void *data)
 		return;
 	popup->base->surface->data = wlr_scene_xdg_surface_create(
 			popup->parent->data, popup->base);
+	tracksampling(&((struct wlr_scene_tree *)popup->base->surface->data)->node);
 	if ((l && !l->mon) || (c && !c->mon))
 		return;
 	box = type == LayerShell ? l->mon->m : c->mon->w;
@@ -1003,6 +1006,7 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->mon = layer_surface->output->data;
 	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
 	l->scene = l->scene_layer->tree;
+	tracksampling(&l->scene->node);
 	/* Refresh focus only after the scene has applied the committed surface. */
 	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
@@ -1021,6 +1025,7 @@ createlocksurface(struct wl_listener *listener, void *data)
 	Monitor *m = lock_surface->output->data;
 	struct wlr_scene_tree *scene_tree = lock_surface->surface->data
 			= wlr_scene_subsurface_tree_create(lock->scene, lock_surface->surface);
+	tracksampling(&scene_tree->node);
 	m->lock_surface = lock_surface;
 
 	wlr_scene_node_set_position(&scene_tree->node, m->m.x, m->m.y);
@@ -1877,6 +1882,7 @@ mapnotify(struct wl_listener *listener, void *data)
 			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
 	c->scene->node.data = c->scene_surface->node.data = c;
+	tracksampling(&c->scene_surface->node);
 
 	client_get_geometry(c, &c->geom);
 
@@ -2390,6 +2396,126 @@ updatescene(Client *c)
 	clip.width = geo.width - c->bw;
 	clip.height = geo.height - c->bw;
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+}
+
+typedef struct {
+	struct wlr_addon addon;
+	struct wlr_scene_buffer *buffer;
+	struct wlr_surface *surface;
+	struct wl_listener commit, outputs, subsurface;
+} SurfaceSampling;
+
+static void
+updatesampling(SurfaceSampling *sampling)
+{
+	struct wlr_scene_buffer *buffer = sampling->buffer;
+	struct wlr_scene_output *output;
+	struct wlr_fbox src = buffer->src_box;
+	struct wlr_box bounds, output_box, intersection;
+	int x, y;
+	double scale = 0;
+	enum wlr_scale_filter_mode filter = WLR_SCALE_FILTER_BILINEAR;
+
+	/* Keep normal filtering for actual scaling, fractional source crops and
+	 * transformed buffers. Only aligned, one-texel-per-output-pixel surfaces
+	 * use nearest sampling; no geometry or configure state is changed. */
+	if (!buffer->buffer || sampling->surface->current.transform != WL_OUTPUT_TRANSFORM_NORMAL ||
+			buffer->dst_width <= 0 || buffer->dst_height <= 0 || wlr_fbox_empty(&src))
+		goto apply;
+	if (!wlr_scene_node_coords(&buffer->node, &x, &y))
+		goto apply;
+	bounds = (struct wlr_box){x, y, buffer->dst_width, buffer->dst_height};
+	/* Use live scene outputs, rather than retaining a surface's output refs
+	 * across output destruction. Every intersecting output must match. */
+	wl_list_for_each(output, &scene->outputs, link) {
+		if (!output->output->enabled)
+			continue;
+		output_box = (struct wlr_box){.x = output->x, .y = output->y};
+		wlr_output_effective_resolution(output->output, &output_box.width, &output_box.height);
+		if (!wlr_box_intersection(&intersection, &bounds, &output_box))
+			continue;
+		double next = output->output->scale;
+		if (next != floor(next) || (scale && scale != next))
+			goto apply;
+		scale = next;
+	}
+	if (scale && fabs(src.x - round(src.x)) < 1e-6 &&
+			fabs(src.y - round(src.y)) < 1e-6 &&
+			fabs(src.width - buffer->dst_width * scale) < 1e-6 &&
+			fabs(src.height - buffer->dst_height * scale) < 1e-6)
+		filter = WLR_SCALE_FILTER_NEAREST;
+apply:
+	wlr_scene_buffer_set_filter_mode(buffer, filter);
+}
+
+static void
+samplingcommit(struct wl_listener *listener, void *data)
+{
+	SurfaceSampling *sampling = wl_container_of(listener, sampling, commit);
+	updatesampling(sampling);
+}
+
+static void
+samplingoutputs(struct wl_listener *listener, void *data)
+{
+	SurfaceSampling *sampling = wl_container_of(listener, sampling, outputs);
+	updatesampling(sampling);
+}
+
+static void
+samplingsubsurface(struct wl_listener *listener, void *data)
+{
+	SurfaceSampling *sampling = wl_container_of(listener, sampling, subsurface);
+	/* wlroots has already created this child's scene subtree. Include disabled
+	 * children so independent/desynchronized commits get the same treatment. */
+	tracksampling(&sampling->buffer->node.parent->node);
+}
+
+static void
+destroysampling(struct wlr_addon *addon)
+{
+	SurfaceSampling *sampling = wl_container_of(addon, sampling, addon);
+	wl_list_remove(&sampling->commit.link);
+	wl_list_remove(&sampling->outputs.link);
+	wl_list_remove(&sampling->subsurface.link);
+	wlr_addon_finish(addon);
+	free(sampling);
+}
+
+static const struct wlr_addon_interface sampling_impl = {
+	.name = "simplewm_surface_sampling",
+	.destroy = destroysampling,
+};
+
+void
+tracksampling(struct wlr_scene_node *node)
+{
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link)
+			tracksampling(child);
+	} else if (node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		struct wlr_scene_surface *surface = wlr_scene_surface_try_from_buffer(buffer);
+		struct wlr_addon *addon;
+		SurfaceSampling *sampling;
+		if (!surface)
+			return;
+		addon = wlr_addon_find(&node->addons, NULL, &sampling_impl);
+		if (addon) {
+			sampling = wl_container_of(addon, sampling, addon);
+		} else {
+			sampling = ecalloc(1, sizeof(*sampling));
+			sampling->buffer = buffer;
+			sampling->surface = surface->surface;
+			wlr_addon_init(&sampling->addon, &node->addons, NULL, &sampling_impl);
+			LISTEN(&surface->surface->events.commit, &sampling->commit, samplingcommit);
+			LISTEN(&buffer->events.outputs_update, &sampling->outputs, samplingoutputs);
+			LISTEN(&surface->surface->events.new_subsurface, &sampling->subsurface, samplingsubsurface);
+		}
+		updatesampling(sampling);
+	}
 }
 
 void
@@ -3070,6 +3196,8 @@ updatemons(struct wl_listener *listener, void *data)
 	wlr_cursor_move(cursor, NULL, 0, 0);
 
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
+	/* Output scale changes can preserve membership and node positions. */
+	tracksampling(&scene->tree.node);
 }
 
 void

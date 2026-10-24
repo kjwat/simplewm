@@ -368,6 +368,8 @@ static void x11_buffers(void)
 	grabc = NULL;
 }
 
+#include "sampling-check.h"
+
 int main(int argc, char **argv)
 {
 	assert(argc == 3);
@@ -401,6 +403,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[2], "limits")) size_limits();
 	else if (!strcmp(argv[2], "stalled")) stalled_tiled();
 	else if (!strcmp(argv[2], "x11")) x11_buffers();
+	else if (!strcmp(argv[2], "sampling")) sampling();
 	else assert(!"unknown visual test case");
 	printf("OK %s\n", argv[2]);
 	return 0;
