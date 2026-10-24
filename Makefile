@@ -72,8 +72,10 @@ check-motion: all
 	python3 tests/motion-check.py
 check-resize: all
 	python3 tests/resize-check.py
+check-visual: all
+	python3 tests/visual-check.py
 check-screenshot: check-motion
 	python3 tests/screenshot-check.py
 clean:
 	rm -rf $(BUILD)
-.PHONY: all install install-fonts uninstall clean lock-preview check-gestures check-motion check-resize check-screenshot
+.PHONY: all install install-fonts uninstall clean lock-preview check-gestures check-motion check-resize check-visual check-screenshot

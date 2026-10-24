@@ -233,6 +233,7 @@ struct Monitor {
 	int nmaster;
 	char ltsymbol[16];
 	int asleep;
+	int resize_waiting; /* already allowed one frame for pending tiled clients */
 };
 
 typedef struct {
@@ -383,6 +384,7 @@ static void unlocksession(struct wl_listener *listener, void *data);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
 static void updatemons(struct wl_listener *listener, void *data);
+static void updatescene(Client *c);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void view(const Arg *arg);
@@ -779,24 +781,24 @@ closemon(Monitor *m)
 	/* update selmon if needed and
 	 * move closed monitor's clients to the focused one */
 	Client *c;
-	int i = 0, nmons = wl_list_length(&mons);
-	if (!nmons) {
+	Monitor *candidate;
+	if (!selmon || selmon == m || !selmon->wlr_output->enabled) {
 		selmon = NULL;
-	} else if (m == selmon) {
-		do /* don't switch to disabled mons */
-			selmon = wl_container_of(mons.next, selmon, link);
-		while (!selmon->wlr_output->enabled && i++ < nmons);
-
-		if (!selmon->wlr_output->enabled)
-			selmon = NULL;
+		wl_list_for_each(candidate, &mons, link)
+			if (candidate != m && candidate->wlr_output->enabled) {
+				selmon = candidate;
+				break;
+			}
 	}
 
 	wl_list_for_each(c, &clients, link) {
-		if (c->isfloating && c->geom.x > m->m.width)
-			resize(c, (struct wlr_box){.x = c->geom.x - m->w.width, .y = c->geom.y,
-					.width = c->geom.width, .height = c->geom.height}, 0);
-		if (c->mon == m)
-			setmon(c, selmon, c->tags);
+		if (c->mon != m)
+			continue;
+		if (selmon && c->isfloating && !c->isfullscreen && !c->ismaximized) {
+			c->geom.x += selmon->w.x - m->w.x;
+			c->geom.y += selmon->w.y - m->w.y;
+		}
+		setmon(c, selmon, c->tags);
 	}
 	focusclient(focustop(selmon), 1);
 	printstatus();
@@ -844,6 +846,15 @@ void
 commitnotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, commit);
+
+	if (client_is_x11(c)) {
+		/* XWM's size describes its last request, not the committed buffer.
+		 * Refresh presentation without sending another ConfigureNotify. */
+		if (client_surface(c)->mapped && c->mon && c->isfloating &&
+				!c->isfullscreen && !c->ismaximized && !client_is_unmanaged(c))
+			updatescene(c);
+		return;
+	}
 
 	if (c->surface.xdg->initial_commit) {
 		/*
@@ -1746,16 +1757,18 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		/* Dispatch can change focus before returning. Hide the key from
+		 * focus-enter state while checking, then release unhandled input. */
+		if (event->keycode <= KEY_MAX) group->consumed[event->keycode] = 1;
 		for (i = 0; i < nsyms; i++)
 			handled = keybinding(mods, syms[i]) || handled;
+		if (!handled && event->keycode <= KEY_MAX) group->consumed[event->keycode] = 0;
 	}
 
 	group->nsyms = 0;
 	wl_event_source_timer_update(group->key_repeat_source, 0);
-	if (handled) {
-		if (event->keycode <= KEY_MAX) group->consumed[event->keycode] = 1;
+	if (handled)
 		return;
-	}
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED &&
 			CLEANMASK(mods) == 0 && nsyms == 1 && gracebinding(syms[0]) &&
 			event->keycode <= KEY_MAX) {
@@ -2231,12 +2244,22 @@ rendermon(struct wl_listener *listener, void *data)
 	struct wlr_output_state pending = {0};
 	struct wlr_gamma_control_v1 *gamma_control;
 	struct timespec now;
+	int pending_resize = 0;
 
-	/* Render if no XDG clients have an outstanding resize and are visible on
-	 * this monitor. */
+	/* Give a tiled layout one frame callback to catch up, then present even
+	 * if a client remains stalled. Further requests must not restart the wait. */
 	wl_list_for_each(c, &clients, link) {
-		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
-			goto skip;
+		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c)) {
+			pending_resize = 1;
+			break;
+		}
+	}
+	if (!pending_resize) {
+		m->resize_waiting = 0;
+	} else if (!m->resize_waiting) {
+		m->resize_waiting = 1;
+		wlr_output_schedule_frame(m->wlr_output);
+		goto skip;
 	}
 
 	/*
@@ -2306,7 +2329,6 @@ void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
-	struct wlr_box clip;
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2314,6 +2336,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 	bbox = interact ? &sgeom : &c->mon->w;
 
 	c->geom = geo;
+	if (interact && c->isfloating && !c->isfullscreen && !c->ismaximized)
+		client_apply_size_hints(c, &c->geom);
 	applybounds(c, bbox);
 	/* wlroots replaces unsent sizes in its existing idle configure batch.
 	 * Keep the newest target available without adding a frame or ack wait. */
@@ -2324,8 +2348,20 @@ resize(Client *c, struct wlr_box geo, int interact)
 		c->resize_interactive = 0;
 	else if (cursor_mode == CurResize && grabc == c)
 		c->resize_interactive = 1;
+	updatescene(c);
+}
 
-	if (c->resize_interactive) {
+void
+updatescene(Client *c)
+{
+	struct wlr_box geo = c->geom, clip;
+
+	if (client_is_x11(c) && c->isfloating && !c->isfullscreen && !c->ismaximized) {
+		/* X11 has no xdg configure/commit serial. Always derive floating
+		 * decorations from the available buffer, including late reversals. */
+		geo.width = client_surface(c)->current.width + 2 * c->bw;
+		geo.height = client_surface(c)->current.height + 2 * c->bw;
+	} else if (c->resize_interactive) {
 		/* geom is the newest pointer target. Present the size of the actual
 		 * window geometry until its replacement buffer is committed. */
 		client_get_geometry(c, &geo);
@@ -2444,6 +2480,7 @@ setfloating(Client *c, int floating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	int was_fullscreen = c->isfullscreen;
 	c->isfullscreen = fullscreen;
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2453,9 +2490,10 @@ setfullscreen(Client *c, int fullscreen)
 			? LyrFS : c->isfloating ? LyrFloat : LyrTile]);
 
 	if (fullscreen) {
-		c->prev = c->geom;
+		if (!was_fullscreen)
+			c->prev = c->geom;
 		resize(c, c->mon->m, 0);
-	} else {
+	} else if (was_fullscreen) {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
@@ -2511,8 +2549,21 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 
 	if (oldmon == m)
 		return;
+	if (oldmon && m) {
+		if (c->isfullscreen) {
+			c->prev.x += m->w.x - oldmon->w.x;
+			c->prev.y += m->w.y - oldmon->w.y;
+		}
+		if (c->ismaximized) {
+			c->restore_geom.x += m->w.x - oldmon->w.x;
+			c->restore_geom.y += m->w.y - oldmon->w.y;
+		}
+	}
 	c->mon = m;
-	c->prev = c->geom;
+	/* A fullscreen request can precede the first map. Capture its initial
+	 * geometry once; monitor changes must preserve an existing restore size. */
+	if (!c->isfullscreen || c->prev.width <= 0 || c->prev.height <= 0)
+		c->prev = c->geom;
 
 	/* Scene graph sends surface leave/enter events on move and resize */
 	if (oldmon)
@@ -3111,7 +3162,8 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 			surface = wlr_scene_surface_try_from_buffer(
 					wlr_scene_buffer_from_node(node))->surface;
 		/* Walk the tree to find a node that knows the client */
-		for (pnode = node; pnode && !c; pnode = &pnode->parent->node)
+		for (pnode = node; pnode && !c;
+				pnode = pnode->parent ? &pnode->parent->node : NULL)
 			c = pnode->data;
 		if (c && c->type == LayerShell) {
 			c = NULL;
@@ -3173,6 +3225,7 @@ associatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, associate);
 
+	LISTEN(&client_surface(c)->events.commit, &c->commit, commitnotify);
 	LISTEN(&client_surface(c)->events.map, &c->map, mapnotify);
 	LISTEN(&client_surface(c)->events.unmap, &c->unmap, unmapnotify);
 }
@@ -3222,6 +3275,7 @@ void
 dissociatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, dissociate);
+	wl_list_remove(&c->commit.link);
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }

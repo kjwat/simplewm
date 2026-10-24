@@ -294,11 +294,24 @@ client_is_unmanaged(Client *c)
 static inline void
 client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb)
 {
-	if (kb)
-		wlr_seat_keyboard_notify_enter(seat, s, kb->keycodes,
-				kb->num_keycodes, &kb->modifiers);
-	else
+	if (kb) {
+		struct wlr_keyboard_group *wlr_group = wlr_keyboard_group_from_wlr_keyboard(kb);
+		KeyboardGroup *group = wlr_group ? wlr_group->data : NULL;
+		uint32_t keys[WLR_KEYBOARD_KEYS_CAP];
+		size_t count = 0;
+		/* Xwayland synthesizes presses for held keys on enter. A shortcut
+		 * that changes focus must not reappear as application input. */
+		for (size_t i = 0; i < kb->num_keycodes; i++) {
+			uint32_t code = kb->keycodes[i];
+			if (group && ((code <= KEY_MAX && group->consumed[code]) ||
+					(group->chord_pending && code == group->pending_chord.keycode)))
+				continue;
+			keys[count++] = code;
+		}
+		wlr_seat_keyboard_notify_enter(seat, s, keys, count, &kb->modifiers);
+	} else {
 		wlr_seat_keyboard_notify_enter(seat, s, NULL, 0, NULL);
+	}
 }
 
 static inline void
@@ -330,6 +343,38 @@ client_set_border_color(Client *c, const float color[static 4])
 	int i;
 	for (i = 0; i < 4; i++)
 		wlr_scene_rect_set_color(c->border[i], color);
+}
+
+static inline void
+client_apply_size_hints(Client *c, struct wlr_box *geom)
+{
+	int min_width = 0, min_height = 0, max_width = 0, max_height = 0;
+	int border = 2 * (int)c->bw;
+	int limit = INT_MAX - border;
+#ifdef XWAYLAND
+	if (client_is_x11(c)) {
+		xcb_size_hints_t *hints = c->surface.xwayland->size_hints;
+		/* XWM normalizes absent min/max hints to nonpositive values. */
+		if (hints) {
+			min_width = hints->min_width; min_height = hints->min_height;
+			max_width = hints->max_width; max_height = hints->max_height;
+		}
+		limit = UINT16_MAX;
+	} else
+#endif
+	{
+		struct wlr_xdg_toplevel_state *state = &c->surface.xdg->toplevel->current;
+		min_width = state->min_width; min_height = state->min_height;
+		max_width = state->max_width; max_height = state->max_height;
+	}
+	min_width = MIN(MAX(1, min_width), limit);
+	min_height = MIN(MAX(1, min_height), limit);
+	/* An absent maximum is unbounded. For contradictory X11 hints, keep
+	 * the minimum while staying within the protocol's dimension range. */
+	max_width = max_width > 0 ? MAX(min_width, MIN(max_width, limit)) : limit;
+	max_height = max_height > 0 ? MAX(min_height, MIN(max_height, limit)) : limit;
+	geom->width = MIN(MAX(min_width, MAX(border + 1, geom->width) - border), max_width) + border;
+	geom->height = MIN(MAX(min_height, MAX(border + 1, geom->height) - border), max_height) + border;
 }
 
 static inline void

@@ -178,7 +178,13 @@ static void pump_for(int ms)
 static int coherent(Probe *p)
 {
 	struct wlr_box actual;
-	client_get_geometry(p->client, &actual);
+	if (client_is_x11(p->client)) {
+		/* XWM geometry is updated when requesting a size, before its buffer. */
+		actual.width = client_surface(p->client)->current.width;
+		actual.height = client_surface(p->client)->current.height;
+	} else {
+		client_get_geometry(p->client, &actual);
+	}
 	return p->client->border[0]->width == actual.width + 2 * (int)p->client->bw &&
 		p->client->border[1]->width == actual.width + 2 * (int)p->client->bw &&
 		p->client->border[1]->node.y == actual.height + (int)p->client->bw &&
@@ -716,7 +722,7 @@ static void applications(const char *kind, const char *probe_path)
 		(long long)(app_age_count ? app_ages[app_age_count / 2] : -1),
 		(long long)(app_age_count ? app_errors[app_age_count / 2] : -1));
 	assert(settled);
-	if (checking && native) assert(!mismatches && coherent(&probes[0]));
+	if (checking) assert(!mismatches && coherent(&probes[0]));
 	if (native) {
 		wl_list_remove(&app_configure.link);
 		wl_list_remove(&app_commit.link);
@@ -733,6 +739,7 @@ static void applications(const char *kind, const char *probe_path)
 	cleanup();
 }
 
+#ifndef RESIZE_HELPERS_ONLY
 int main(int argc, char **argv)
 {
 	checking = argc > 1 && !strcmp(argv[1], "--check");
@@ -778,3 +785,4 @@ int main(int argc, char **argv)
 	puts("OK protocol clients, rapid interactive resizing, reversals and controlled redraw delays");
 	return 0;
 }
+#endif

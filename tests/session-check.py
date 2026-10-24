@@ -197,6 +197,51 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         assert pressed == ['65293', '97'], f'pending Enter reordered with typing: {pressed}'
         paging.terminate(); paging.wait(timeout=5)
         wait_for(lambda: not status()['clients'], 'paging probe closed')
+
+        # Xwayland turns held keys from keyboard-enter into presses. A consumed
+        # workspace shortcut must not page either application during handoff.
+        x11_environment = root / 'x11-environment'
+        exporter = root / 'export-x11.py'
+        exporter.write_text('import os\nfrom pathlib import Path\nPath(' +
+                            repr(str(x11_environment)) + ').write_text(os.environ["DISPLAY"])\n')
+        request('exec python3 ' + str(exporter))
+        wait_for(lambda: x11_environment.exists(), 'private Xwayland environment')
+        paging_env = env | {'DISPLAY': x11_environment.read_text(), 'GDK_BACKEND': 'x11'}
+        page_logs = [root / 'x11-page-source', root / 'x11-page-destination']
+        page_apps = []
+        for workspace_number, title, path in zip((1, 2), ('X11 paging source', 'X11 paging destination'), page_logs):
+            request(f'workspace {workspace_number}')
+            child = subprocess.Popen(['python3', str(source / 'tests/probe.py'), title,
+                                      str(path), '--releases'],
+                                     env=paging_env, stdout=log, stderr=log)
+            children.append(child); page_apps.append(child)
+            wait_for(lambda title=title: any(c['title'] == title for c in status()['clients']),
+                     title + ' mapped')
+        for shortcut, initial, expected in (('Page_Down', 1, 2), ('Page_Up', 2, 1)):
+            for late_super in (False, True):
+                request(f'workspace {initial}')
+                for path in page_logs:
+                    path.write_text('')
+                if late_super:
+                    key('-P', shortcut, '-s', '10', '-M', 'logo', '-s', '10',
+                        '-m', 'logo', '-s', '700', '-p', shortcut)
+                else:
+                    key('-M', 'logo', '-s', '1000', '-P', shortcut, '-s', '10',
+                        '-m', 'logo', '-s', '700', '-p', shortcut)
+                assert workspace() == expected, 'Xwayland workspace paging missed'
+                for path in page_logs:
+                    events = path.read_text().splitlines()
+                    assert not any('65365' in row or '65366' in row for row in events), \
+                        f'consumed page key leaked to Xwayland application: {events}'
+        request('workspace 1')
+        page_logs[0].write_text('')
+        key('-k', 'Page_Down')
+        assert sum('65366' in row for row in page_logs[0].read_text().splitlines()) == 2, \
+            'bare Xwayland page tap lost its press or release'
+        for child in page_apps:
+            child.terminate(); child.wait(timeout=5)
+        wait_for(lambda: not status()['clients'], 'Xwayland paging probes closed')
+        request('workspace 1')
         launch('Writer')
         wait_for(lambda: len(status()['clients']) == 1, 'first native window')
         one = active()
@@ -270,7 +315,7 @@ with tempfile.TemporaryDirectory(prefix='simplewm-session-') as temp:
         lock.kill(); lock.wait()
         assert status()['locked'], 'locker crash must remain locked'
         assert not notifications.exists(), 'Workspace shortcuts must not send notifications'
-        print('OK native/Xwayland windows, real shortcuts, late-Super paging/Enter grace, ordinary key delivery/order, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
+        print('OK native/Xwayland windows, real shortcuts, late-Super paging/Enter grace, Xwayland workspace shortcut isolation, ordinary key delivery/order, quiet bounded workspaces, maximize/restore, shifted workspace move, focus, layouts, clipboard, reload failure, output guard, IPC, screenshot, and secure lock')
     except BaseException:
         log.flush()
         print((root / 'session.log').read_text(errors='replace'), file=sys.stderr)

@@ -59,6 +59,10 @@ another key forwards them sooner. This applies only when Enter has a Super-only
 binding or the page key has a Super-only workspace binding. Other typing and
 shortcuts retain their normal timing.
 
+Workspace shortcuts consume their page keys through focus changes, including
+Xwayland windows. Holding or releasing Super while the page key remains down
+must not page the newly focused application.
+
 `simplewm --check-config -c path` validates before starting. Super+Shift+R,
 `simplewmctl reload`, or SIGHUP applies changes without restarting applications.
 Invalid configuration or rejected output settings leave the working config in
@@ -351,5 +355,10 @@ clipboard, layouts, maximize/restore, workspaces, reload, and Xwayland against
 the compositor. `make check-screenshot` checks a real Slurp selector's crosshair
 and immediate click/drag without prior pointer movement, cancellation, focus
 restoration, repeated hotkeys, and clipboard lock release.
+
+`make check-visual` checks fullscreen restoration, output removal in horizontal,
+vertical and offset layouts, application min/max sizes, stalled tiled clients,
+and Xwayland buffer/border coordination. See [VISUAL-VALIDATION.md](VISUAL-VALIDATION.md)
+for the baseline comparisons, limits and ordinary `simpleupdate` delivery path.
 `VALIDATION.md` records completed checks and the image's
 remaining validation work.
