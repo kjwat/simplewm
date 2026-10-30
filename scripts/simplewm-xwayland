@@ -1,0 +1,3 @@
+#!/bin/sh
+# Set X11 screen DPI at startup; leave resources and Wayland scaling alone.
+exec Xwayland -dpi 104 "$@"

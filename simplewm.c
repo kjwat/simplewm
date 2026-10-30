@@ -2947,6 +2947,9 @@ setup(void)
 	 * Initialise the XWayland X server.
 	 * It will be started when the first X client is started.
 	 */
+	/* wlroots 0.18 has no extra-arguments API; the launcher adds -dpi 104.
+	 * Keep an explicit WLR_XWAYLAND override for testing or opting out. */
+	setenv("WLR_XWAYLAND", "simplewm-xwayland", 0);
 	if ((xwayland = wlr_xwayland_create(dpy, compositor, 1))) {
 		LISTEN_STATIC(&xwayland->events.ready, xwaylandready);
 		LISTEN_STATIC(&xwayland->events.new_surface, createnotifyx11);

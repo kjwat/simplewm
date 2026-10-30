@@ -68,6 +68,8 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/simpleupdate-target $(DESTDIR)$(PREFIX)/bin/simplewm-lock-client
 check-gestures: all
 	python3 tests/gestures-check.py
+check-xwayland-dpi: all
+	python3 tests/xwayland-dpi-check.py
 check-motion: all
 	python3 tests/motion-check.py
 check-resize: all
@@ -78,4 +80,4 @@ check-screenshot: check-motion
 	python3 tests/screenshot-check.py
 clean:
 	rm -rf $(BUILD)
-.PHONY: all install install-fonts uninstall clean lock-preview check-gestures check-motion check-resize check-visual check-screenshot
+.PHONY: all install install-fonts uninstall clean lock-preview check-gestures check-xwayland-dpi check-motion check-resize check-visual check-screenshot

@@ -79,6 +79,31 @@ fresh SimpleOS installations. Log out and back in afterward. Existing stock
 13-point terminal settings move to 12 once, with the old config saved in
 `~/.local/state/simplewm/config-before-butterfonts`; other font choices stay as set.
 
+Xwayland also reports 104 DPI through `xdpyinfo`. SimpleWM selects the
+`simplewm-xwayland` launcher through wlroots 0.18.2's existing `WLR_XWAYLAND`
+override; it executes the system Xwayland with `-dpi 104` and forwards all
+wlroots arguments unchanged. The existing install/uninstall script rules include
+this helper. No wlroots or Xwayland patch or upgrade is required. X resources,
+font sizes, rendering settings and Wayland output scales are unchanged.
+
+Xwayland 24.1.6 defaults `monitorResolution` to 96 when no `-dpi` is supplied
+([screen initialization](https://sources.debian.org/src/xwayland/2%3A24.1.6-1/hw/xwayland/xwayland-screen.c/)).
+Its rootless RandR screen-size handler returns success without changing the
+screen, so `xrandr --dpi` and `xrandr --fb ... --dpi` cannot fix the reported DPI
+([output implementation](https://sources.debian.org/src/xwayland/2%3A24.1.6-1/hw/xwayland/xwayland-output.c/)).
+wlroots 0.18.2 supports an executable override but no additional startup arguments
+([launcher implementation](https://sources.debian.org/src/wlroots/0.18.2-3/xwayland/server.c/)).
+
+After `make && sudo make install`, start a new SimpleWM session, then check
+`xdpyinfo | grep -E 'dimensions|resolution'` and `xrdb -query | grep '^Xft\.'`.
+At 1920x1200, expect 468x293 millimeters and **104x104 dots per inch**, with
+`Xft.dpi: 104` and the existing font resources intact. Configuration reload
+cannot change the arguments of an already running Xwayland. To opt out for a
+session, launch with `WLR_XWAYLAND=/usr/bin/Xwayland simplewm-session`; explicit
+overrides are preserved. `make check-xwayland-dpi` verifies the default launcher,
+resources, output resizing, and the opt-out in private headless sessions without
+restarting the desktop. The test requires `xdpyinfo`, `xrdb` and `xrandr`.
+
 Native touchpad pinch, swipe and hold gestures are forwarded to the
 pointer-focused Wayland client through `zwp_pointer_gestures_v1` (version 3).
 The wlroots 0.18 input path preserves event timestamps, finger counts, movement,
