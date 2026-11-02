@@ -216,6 +216,8 @@ struct Monitor {
 	struct wlr_scene_output *scene_output;
 	struct wlr_scene_rect *fullscreen_bg; /* See createmon() for info */
 	struct wl_listener frame;
+	struct wl_event_source *resize_timer;
+	int resize_waiting, resize_timed_out;
 	struct wl_listener destroy;
 	struct wl_listener request_state;
 	struct wl_listener destroy_lock_surface;
@@ -356,6 +358,7 @@ static void printstatus(void);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
 static void rendermon(struct wl_listener *listener, void *data);
+static int resizewaittimeout(void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
@@ -749,6 +752,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 	LayerSurface *l, *tmp;
 	size_t i;
 
+	wl_event_source_remove(m->resize_timer);
 	/* m->layers[i] are intentionally not unlinked */
 	for (i = 0; i < LENGTH(m->layers); i++) {
 		wl_list_for_each_safe(l, tmp, &m->layers[i], link)
@@ -1069,6 +1073,9 @@ createmon(struct wl_listener *listener, void *data)
 	}
 	wlr_output_state_finish(&state);
 
+	m->resize_timer = wl_event_loop_add_timer(event_loop, resizewaittimeout, m);
+	if (!m->resize_timer)
+		die("could not create resize wait timer");
 	wl_list_insert(&mons, &m->link);
 	printstatus();
 
@@ -2218,6 +2225,16 @@ quit(const Arg *arg)
 	wl_display_terminate(dpy);
 }
 
+static int
+resizewaittimeout(void *data)
+{
+	Monitor *m = data;
+	m->resize_timed_out = 1;
+	/* Wake the output even if the delayed client never commits another buffer. */
+	wlr_output_schedule_frame(m->wlr_output);
+	return 0;
+}
+
 void
 rendermon(struct wl_listener *listener, void *data)
 {
@@ -2229,11 +2246,29 @@ rendermon(struct wl_listener *listener, void *data)
 	struct wlr_gamma_control_v1 *gamma_control;
 	struct timespec now;
 
-	/* Render if no XDG clients have an outstanding resize and are visible on
-	 * this monitor. */
+	/* Allow a short resize rendezvous, then present the existing scene unchanged.
+	 * A slow tiled client must not indefinitely withhold other ready windows.
+	 * Keep one deadline for the entire pending batch: new configure serials
+	 * must not continuously restart the wait. No buffer scaling or geometry
+	 * changes are introduced here. */
+	int pending_resize = 0;
 	wl_list_for_each(c, &clients, link) {
-		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
+		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c)) {
+			pending_resize = 1;
+			break;
+		}
+	}
+	if (pending_resize) {
+		if (!m->resize_waiting) {
+			m->resize_waiting = 1;
+			wl_event_source_timer_update(m->resize_timer, 50);
+		}
+		if (!m->resize_timed_out) {
 			goto skip;
+		}
+	} else if (m->resize_waiting) {
+		wl_event_source_timer_update(m->resize_timer, 0);
+		m->resize_waiting = m->resize_timed_out = 0;
 	}
 
 	/*

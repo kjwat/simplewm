@@ -14,3 +14,12 @@ This is the Linux SimpleWM repository. Do not merge FreeBSD port code or
 platform-specific replacements into it. Keep FreeBSD port work in its separate
 repository. Neither a source update nor a metadata repair authorizes bringing
 the rejected visual renovation back.
+
+## Authorized performance exception (2026-11-02)
+
+The user explicitly requested a tested fix with exact rollback. The new
+per-monitor 50 ms resize-wait deadline is authorized: it bounds the existing
+monitor-wide wait without changing geometry, clipping, sampling, fonts, or
+renderer selection. Keep this narrow scheduling exception separate from the
+rejected renovation above. See PERFORMANCE-HANDOFF.md for evidence, deployment
+and the user's “just roll it back” instruction.

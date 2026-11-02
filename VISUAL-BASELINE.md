@@ -51,3 +51,22 @@ panel readability validation. No live compositor, personal settings, installed
 manifest or updater pin was changed. Git history is preserved; this is a forward
 source rollback, not deletion of historical commits. Upstream will retain the
 rejected code until this cleanup is committed and published.
+
+## Subsequent bounded-wait experiment (2026-11-02)
+
+The restoration described above is the saved rollback point. At the user's
+explicit request, a new 50 ms per-monitor timer now bounds the existing tiled
+resize rendezvous. Repeated configure serials do not extend that deadline,
+and the timer wakes the output even if no client commits. All pixel-producing
+operations, geometry, clipping, sampling, font settings and DPI are unchanged.
+Slow resize transitions may expose the old buffer sooner; this temporal
+difference is the purpose of the fix. It does not restore the discarded
+interactive resize/presentation or surface-sampling implementation.
+
+Three repeated AMD GLES2 headless runs reduced induced longest presentation
+gaps from 262–508 ms to 66.68–67.25 ms; ordinary
+resize p95 remained about 21.4–21.8 ms. Entire 1920x1200 captured images matched
+the saved source baseline with zero changed pixels at native, resized and mixed
+Wayland/Xwayland text checkpoints. These tests do not certify physical-panel
+comfort or diagnose every live workload. See PERFORMANCE-HANDOFF.md for the
+complete measurements, activation status and rollback.
