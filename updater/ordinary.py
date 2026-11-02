@@ -106,7 +106,7 @@ def source_plan(update, args, work, env, demote, uid, gid, version):
                 raise RuntimeError('Expected a complete SimpleWM source folder')
             update.source_digest(original)
             shutil.copytree(original, source,
-                            ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'))
+                            ignore=update.source_build_ignores)
             for path in (source, *source.rglob('*')):
                 if path.is_symlink():
                     raise RuntimeError('Local SimpleWM source contains a symlink')
@@ -115,7 +115,8 @@ def source_plan(update, args, work, env, demote, uid, gid, version):
         else:
             update.say('Checking ' + component)
             sha = update.fetch_source(source, env, demote, origin)
-            if not update.published_update_allowed(component, source, sha, current, env, demote):
+            if not update.published_update_allowed(component, source, sha, current, env, demote,
+                    follow_upstream=getattr(args, 'follow_upstream', False)):
                 continue
         requirements(source, version)
         if sha == current and not args.rebuild:

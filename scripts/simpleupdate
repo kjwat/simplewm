@@ -635,7 +635,7 @@ def fetch_source(source, env, demote, origin=OFFICIAL):
     run(git + ['-C', str(source), 'checkout', '--quiet', '--detach', sha], **opts)
     return sha
 
-def published_update_allowed(component, source, sha, current, env, demote):
+def published_update_allowed(component, source, sha, current, env, demote, follow_upstream=False):
     """Accept equal/newer releases; preserve local, older and divergent releases."""
     if not current or current == sha:
         return True
@@ -643,6 +643,15 @@ def published_update_allowed(component, source, sha, current, env, demote):
         if component == 'SimpleWM' and legacy_wm_update_allowed(source, sha, current, env, demote):
             say('SimpleWM: verified the original 1.0 ISO source snapshot; upgrading to its published successor')
             return True
+        if component == 'SimpleWM' and follow_upstream:
+            if published_wm_snapshot_matches(source, sha, env, demote):
+                say('SimpleWM: verified the stored rollback source against its published base; resuming upstream updates')
+                return True
+            say('SimpleWM: cannot resume upstream: stored source does not match a published ancestor; preserving local changes')
+            return False
+        if component == 'SimpleWM':
+            say('SimpleWM: local/rollback revision is pinned; use --wm-only --follow-upstream to verify its published base and resume updates')
+            return False
         say(f'{component}: preserving the explicitly installed local source')
         return False
     opts = dict(env=env, preexec_fn=demote)
@@ -736,6 +745,13 @@ def build_and_test(source, stage, sha, env, demote, verify=False):
         daemon.symlink_to('../sbin/simpleserved')
     return local
 
+def source_build_ignores(directory, names):
+    # Build directories are disposable; tracked build-* files (notably
+    # build-dependencies.json) are part of the source and its provenance.
+    return [name for name in names if name in {'.git', '__pycache__'} or
+            ((name == 'build' or name.startswith('build-')) and
+             (Path(directory) / name).is_dir())]
+
 def source_digest(source):
     """Identify bundled/local source without trusting user-supplied version text."""
     digest = hashlib.sha256()
@@ -748,6 +764,62 @@ def source_digest(source):
         if path.is_file():
             digest.update(str(relative).encode() + b'\0' + path.read_bytes() + b'\0')
     return 'local-' + digest.hexdigest()
+
+def published_wm_snapshot_matches(source, sha, env, demote):
+    """Release a local pin only after exact published-source and ancestry checks.
+
+    A historical rollback may have a stale local digest. Its base metadata is
+    only a candidate: every actual file must match the verified Git tree.
+    """
+    data = PREFIX / 'share/simplewm'
+    snapshot = data / 'source'
+    manifest = data / 'install-manifest'
+    if not snapshot.is_dir() or snapshot.is_symlink() or manifest.is_symlink():
+        return False
+    metadata = dict(line.split('=', 1) for line in manifest.read_text().splitlines() if '=' in line)
+    base = metadata.get('base_source_sha', '')
+    if not re.fullmatch(r'[0-9a-f]{40,64}', base):
+        return False
+    opts = dict(env=env, preexec_fn=demote)
+    result = subprocess.run(['git', '-C', str(source), 'rev-parse', '--verify', '--quiet',
+                             base + '^{commit}'], capture_output=True, text=True, **opts)
+    if result.returncode == 1:
+        return False
+    result.check_returncode()
+    run(['git', '-C', str(source), 'fsck', '--strict', '--no-reflogs', base, sha], **opts)
+    result = subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', base, sha],
+                            capture_output=True, text=True, **opts)
+    if result.returncode == 1:
+        return False
+    result.check_returncode()
+    records = run(['git', '-C', str(source), 'ls-tree', '-r', '-z', '--full-tree', base],
+                  capture_output=True, **opts).stdout
+    expected = {}
+    for record in records.split(b'\0'):
+        if not record:
+            continue
+        info, name = record.split(b'\t', 1)
+        mode, kind, digest = info.split()
+        if kind != b'blob' or mode not in (b'100644', b'100755'):
+            return False
+        expected[os.fsdecode(name)] = (digest.decode(), mode == b'100755')
+    actual = {}
+    for path in snapshot.rglob('*'):
+        relative = path.relative_to(snapshot)
+        if any(part in {'.git', 'build', '__pycache__'} or part.startswith('build-') for part in relative.parts[:-1]):
+            continue
+        if path.is_symlink():
+            return False
+        if path.is_file():
+            actual[str(relative)] = path
+    if not expected or set(actual) != set(expected):
+        return False
+    names = sorted(actual)
+    hashes = run(['git', '-C', str(source), 'hash-object', '--no-filters', '--',
+                  *[str(actual[name]) for name in names]], capture_output=True, text=True, **opts).stdout.splitlines()
+    return len(hashes) == len(names) and all(
+        digest == expected[name][0] and bool(actual[name].stat().st_mode & 0o111) == expected[name][1]
+        for name, digest in zip(names, hashes))
 
 def legacy_suite_update_allowed(source, sha, current, env, demote):
     known = LEGACY_SUITE_RELEASES.get(current)
@@ -834,7 +906,7 @@ def build_and_test_wm(source, stage, sha, env, demote, verify=False):
         if 'not found' in linkage.stdout:
             raise RuntimeError('SimpleWM lock client has missing runtime libraries')
     shutil.copytree(source, local / 'share/simplewm/source',
-                    ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'), symlinks=True)
+                    ignore=source_build_ignores, symlinks=True)
     provenance = f'simplewm_source_sha={sha}\nrepository={OFFICIAL_WM}\n'
     if env.get('SIMPLEUPDATE_WM_PKGS'):
         provenance += 'wlroots_pkg_config=' + env['SIMPLEUPDATE_WM_PKGS'].split()[0] + '\n'
@@ -874,7 +946,7 @@ def update_wm(args, work, env, demote, uid, gid, log, prepared=None):
             raise RuntimeError('expected a complete SimpleWM source folder')
         source_digest(original)  # Reject symlinks before copying or following them.
         say(f'Using explicitly selected local SimpleWM source: {original}')
-        shutil.copytree(original, source, ignore=shutil.ignore_patterns('.git', 'build', 'build-*', '__pycache__'))
+        shutil.copytree(original, source, ignore=source_build_ignores)
         for path in [source, *source.rglob('*')]:
             if path.is_symlink():
                 raise RuntimeError('local SimpleWM source contains a symlink')
@@ -885,7 +957,8 @@ def update_wm(args, work, env, demote, uid, gid, log, prepared=None):
     else:
         say(f'Fetching only {OFFICIAL_WM}')
         sha = fetch_source(source, env, demote, OFFICIAL_WM)
-    if prepared is None and original is None and not published_update_allowed('SimpleWM', source, sha, current, env, demote):
+    if prepared is None and original is None and not published_update_allowed('SimpleWM', source, sha, current, env, demote,
+            follow_upstream=getattr(args, 'follow_upstream', False)):
         return
     if current == sha and not args.rebuild:
         say(f'SimpleWM {sha[:18]} is current; no build needed')
@@ -1376,6 +1449,7 @@ def main():
     parser.add_argument('--os-only', action='store_true', help='only Debian and Liquorix through APT')
     parser.add_argument('--suite-only', action='store_true', help='only official SimpleSuite')
     parser.add_argument('--wm-only', action='store_true', help='only SimpleWM')
+    parser.add_argument('--follow-upstream', action='store_true', help='release a local SimpleWM pin after verifying its stored source matches a published ancestor')
     parser.add_argument('--wm-local', type=Path, help='build/test an explicitly chosen local SimpleWM source folder')
     parser.add_argument('--rebuild', action='store_true', help='retest/reinstall even when the revision is unchanged')
     if ORDINARY_UPDATE is not None:
@@ -1387,6 +1461,8 @@ def main():
         parser.error('choose one update scope')
     if args.wm_local and (args.os_only or args.suite_only):
         parser.error('--wm-local requires a scope that includes SimpleWM')
+    if args.follow_upstream and (args.os_only or args.suite_only or args.wm_local or args.release_upgrade):
+        parser.error('--follow-upstream requires official SimpleWM updates without a release upgrade')
     if args.release_upgrade and (args.os_only or args.suite_only or args.wm_only or args.wm_local or args.check):
         parser.error('--release-upgrade requires both components; use --dry-run to preview it')
     if args.dry_run:

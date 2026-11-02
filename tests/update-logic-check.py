@@ -33,6 +33,8 @@ with tempfile.TemporaryDirectory() as temp:
                               capture_output=True, text=True).stdout.strip()
     upstream = root / 'upstream'
     git('init', '--quiet', '-b', 'main', upstream)
+    (upstream / 'build-fixture.c').write_text('{}\n')
+    git('-C', upstream, 'add', 'build-fixture.c')
     def commit(text):
         (upstream / 'config').write_text(text)
         git('-C', upstream, 'add', 'config')
@@ -217,6 +219,59 @@ with tempfile.TemporaryDirectory() as temp:
             git('-C', upstream, 'show', newer + ':config') if changed else 'working installed release')
         if changed:
             assert 'verified the original 1.0 ISO source snapshot' in output
+        count += 1
+    # Source snapshots must preserve tracked build-* files, not build outputs.
+    source_files = root / 'source-files'; source_files.mkdir()
+    (source_files / 'build-dependencies.json').write_text('{}')
+    (source_files / 'build-temp').mkdir(); (source_files / 'build-temp/output').write_text('binary')
+    (source_files / 'build').mkdir()
+    __import__('shutil').copytree(source_files, root / 'copied-source', ignore=update.source_build_ignores)
+    assert (root / 'copied-source/build-dependencies.json').read_text() == '{}'
+    assert not (root / 'copied-source/build-temp').exists() and not (root / 'copied-source/build').exists()
+    # An explicit resume verifies the actual snapshot against a published base,
+    # including when rollback provenance contains an obsolete local digest.
+    for case, published, allowed, follow in (
+            ('exact', newer, True, True), ('stale-digest', newer, True, True),
+            ('no-opt-in', newer, False, False), ('modified', newer, False, True),
+            ('extra-file', newer, False, True), ('missing-file', newer, False, True),
+            ('symlink', newer, False, True), ('snapshot-link', newer, False, True),
+            ('executable-bit', newer, False, True), ('missing-base', newer, False, True),
+            ('unknown-base', newer, False, True), ('older', old, False, True),
+            ('divergent', divergent, False, True)):
+        prefix, work = prepare('resume-wm-' + case, bundle=False)
+        snapshot = prefix / 'share/simplewm/source'; snapshot.mkdir()
+        (snapshot / 'config').write_text('installed release')
+        (snapshot / 'build-fixture.c').write_text('{}\n')
+        digest = update.source_digest(snapshot)
+        if case == 'stale-digest': digest = 'local-' + 'e' * 64
+        manifest = prefix / 'share/simplewm/install-manifest'
+        base = '' if case == 'missing-base' else 'd' * 40 if case == 'unknown-base' else installed
+        manifest.write_text(f'simplewm_source_sha={digest}\nbase_source_sha={base}\nrollback_pinned=yes\n')
+        if case == 'modified': (snapshot / 'config').write_text('personal edits')
+        if case == 'extra-file': (snapshot / 'extra').write_text('custom source')
+        if case == 'missing-file': (snapshot / 'config').unlink()
+        if case == 'executable-bit': (snapshot / 'config').chmod(0o755)
+        if case == 'symlink':
+            (snapshot / 'config').unlink(); (snapshot / 'config').symlink_to(upstream / 'config')
+        if case == 'snapshot-link':
+            target = snapshot.with_name('linked'); snapshot.rename(target); snapshot.symlink_to(target)
+        git('-C', upstream, 'update-ref', 'refs/heads/main', published)
+        build_calls.clear()
+        output = invoke('simplewm', prefix, work, follow_upstream=follow)
+        assert len(build_calls) == int(allowed), (case, output)
+        assert update.installed_revision(manifest, 'simplewm_source_sha') == (newer if allowed else digest)
+        if allowed:
+            assert 'rollback_pinned' not in manifest.read_text()
+            assert 'resuming upstream updates' in output
+        if case == 'stale-digest':
+            # After the one-time adoption, a subsequent commit advances normally
+            # without --follow-upstream; the new commit is not another pin.
+            future = commit('future upstream release')
+            next_work = work.with_name('next-work'); next_work.mkdir()
+            build_calls.clear()
+            invoke('simplewm', prefix, next_work)
+            assert len(build_calls) == 1 and build_calls[0][0] == future
+            assert update.installed_revision(manifest, 'simplewm_source_sha') == future
         count += 1
     # A corrupted fetched commit must fail the actual fsck before checkout.
     source = root / 'damaged-fetch'

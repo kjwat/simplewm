@@ -53,6 +53,18 @@ compositor changes through plain `simpleupdate`. Edited or unrecognized local
 sources, and older or divergent published histories, remain preserved. Future
 images should record their published Git revision and bundle as described below.
 
+For an intentionally pinned WM rollback, `simpleupdate --wm-only --follow-upstream`
+opts back into published updates. The updater treats `base_source_sha` only as a
+candidate: it verifies that commit and its ancestry, then compares every stored
+source file and executable bit against the Git tree. Modified, extra, missing or
+symlinked source files prevent adoption. A stale local digest alone cannot block
+an exact verified published snapshot. The normal installation transaction writes
+the new published revision, source and bundle together and drops the old rollback
+pin. Later upstream commits update normally without the flag. `--check` previews
+this decision without changing the installation. Without explicit opt-in, local
+rollbacks remain pinned and the status explains how to resume. Genuine custom
+sources remain preserved even when the option is requested.
+
 Current Suite sources provide `make full`, `make test-full` and
 `make DESTDIR=STAGE install-full`. The updater calls that complete installation
 interface, then inventories what it actually staged. New applications and their
