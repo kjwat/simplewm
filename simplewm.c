@@ -216,8 +216,6 @@ struct Monitor {
 	struct wlr_scene_output *scene_output;
 	struct wlr_scene_rect *fullscreen_bg; /* See createmon() for info */
 	struct wl_listener frame;
-	struct wl_event_source *resize_timer;
-	int resize_waiting, resize_timed_out;
 	struct wl_listener destroy;
 	struct wl_listener request_state;
 	struct wl_listener destroy_lock_surface;
@@ -358,7 +356,6 @@ static void printstatus(void);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
 static void rendermon(struct wl_listener *listener, void *data);
-static int resizewaittimeout(void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
@@ -752,7 +749,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 	LayerSurface *l, *tmp;
 	size_t i;
 
-	wl_event_source_remove(m->resize_timer);
 	/* m->layers[i] are intentionally not unlinked */
 	for (i = 0; i < LENGTH(m->layers); i++) {
 		wl_list_for_each_safe(l, tmp, &m->layers[i], link)
@@ -1073,9 +1069,6 @@ createmon(struct wl_listener *listener, void *data)
 	}
 	wlr_output_state_finish(&state);
 
-	m->resize_timer = wl_event_loop_add_timer(event_loop, resizewaittimeout, m);
-	if (!m->resize_timer)
-		die("could not create resize wait timer");
 	wl_list_insert(&mons, &m->link);
 	printstatus();
 
@@ -1748,18 +1741,16 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding. */
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		/* Dispatch can change focus before returning. Hide the key from
-		 * focus-enter state while checking, then release unhandled input. */
-		if (event->keycode <= KEY_MAX) group->consumed[event->keycode] = 1;
 		for (i = 0; i < nsyms; i++)
 			handled = keybinding(mods, syms[i]) || handled;
-		if (!handled && event->keycode <= KEY_MAX) group->consumed[event->keycode] = 0;
 	}
 
 	group->nsyms = 0;
 	wl_event_source_timer_update(group->key_repeat_source, 0);
-	if (handled)
+	if (handled) {
+		if (event->keycode <= KEY_MAX) group->consumed[event->keycode] = 1;
 		return;
+	}
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED &&
 			CLEANMASK(mods) == 0 && nsyms == 1 && gracebinding(syms[0]) &&
 			event->keycode <= KEY_MAX) {
@@ -2225,16 +2216,6 @@ quit(const Arg *arg)
 	wl_display_terminate(dpy);
 }
 
-static int
-resizewaittimeout(void *data)
-{
-	Monitor *m = data;
-	m->resize_timed_out = 1;
-	/* Wake the output even if the delayed client never commits another buffer. */
-	wlr_output_schedule_frame(m->wlr_output);
-	return 0;
-}
-
 void
 rendermon(struct wl_listener *listener, void *data)
 {
@@ -2246,29 +2227,11 @@ rendermon(struct wl_listener *listener, void *data)
 	struct wlr_gamma_control_v1 *gamma_control;
 	struct timespec now;
 
-	/* Allow a short resize rendezvous, then present the existing scene unchanged.
-	 * A slow tiled client must not indefinitely withhold other ready windows.
-	 * Keep one deadline for the entire pending batch: new configure serials
-	 * must not continuously restart the wait. No buffer scaling or geometry
-	 * changes are introduced here. */
-	int pending_resize = 0;
+	/* Render if no XDG clients have an outstanding resize and are visible on
+	 * this monitor. */
 	wl_list_for_each(c, &clients, link) {
-		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c)) {
-			pending_resize = 1;
-			break;
-		}
-	}
-	if (pending_resize) {
-		if (!m->resize_waiting) {
-			m->resize_waiting = 1;
-			wl_event_source_timer_update(m->resize_timer, 50);
-		}
-		if (!m->resize_timed_out) {
+		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
 			goto skip;
-		}
-	} else if (m->resize_waiting) {
-		wl_event_source_timer_update(m->resize_timer, 0);
-		m->resize_waiting = m->resize_timed_out = 0;
 	}
 
 	/*
@@ -2781,8 +2744,6 @@ setup(void)
 	 * Initialise the XWayland X server.
 	 * It will be started when the first X client is started.
 	 */
-	/* Keep the independent 104-DPI Xwayland startup correction. */
-	setenv("WLR_XWAYLAND", "simplewm-xwayland", 0);
 	if ((xwayland = wlr_xwayland_create(dpy, compositor, 1))) {
 		LISTEN_STATIC(&xwayland->events.ready, xwaylandready);
 		LISTEN_STATIC(&xwayland->events.new_surface, createnotifyx11);

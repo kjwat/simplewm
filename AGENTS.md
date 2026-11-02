@@ -1,25 +1,17 @@
-# Compositor baseline and platform boundary
+# Exact ea715bb compositor baseline
 
-The user rejected the post-ea715bb visual renovation because it regressed the
-window system and font readability. Keep rendering, resizing, scene clipping,
-and surface sampling on the ea715bb1994d11e3c0ba46280fdefc1416342609 baseline.
-Do not restore the discarded interactive-resize presentation pipeline,
-SurfaceSampling/tracksampling policy, or its replacement geometry/rendering
-paths as an optimization or automatic upstream reconciliation.
+The user explicitly requested a full rollback to
+`ea715bb1994d11e3c0ba46280fdefc1416342609` on 2026-11-02, discarding
+subsequent local changes and making the rollback the upstream baseline.
+Keep simplewm.c, client.h, config, session helpers, rendering, geometry,
+clipping, resizing, sampling, and Xwayland startup exactly at that commit.
+Do not reintroduce the post-baseline workspace-key handoff, 104-DPI Xwayland
+launcher, or 50 ms resize-wait experiment without a new user request.
 
-The independent workspace-key handoff fix and 104-DPI Xwayland launcher are
-intentionally retained. See VISUAL-BASELINE.md for the exact scope and checks.
+SimpleUpdate version 9 and its rollback/unpin logic are retained so published
+updater metadata does not downgrade. Publish WM rollback releases as forward
+commits and record their published commit SHA in the installed manifest;
+this baseline must remain eligible for ordinary upstream updates.
 
-This is the Linux SimpleWM repository. Do not merge FreeBSD port code or
-platform-specific replacements into it. Keep FreeBSD port work in its separate
-repository. Neither a source update nor a metadata repair authorizes bringing
-the rejected visual renovation back.
-
-## Authorized performance exception (2026-11-02)
-
-The user explicitly requested a tested fix with exact rollback. The new
-per-monitor 50 ms resize-wait deadline is authorized: it bounds the existing
-monitor-wide wait without changing geometry, clipping, sampling, fonts, or
-renderer selection. Keep this narrow scheduling exception separate from the
-rejected renovation above. See PERFORMANCE-HANDOFF.md for evidence, deployment
-and the user's “just roll it back” instruction.
+This is the Linux SimpleWM repository. Keep FreeBSD port changes in their
+separate repository. See VISUAL-BASELINE.md for rollback scope.

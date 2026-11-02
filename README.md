@@ -59,10 +59,6 @@ another key forwards them sooner. This applies only when Enter has a Super-only
 binding or the page key has a Super-only workspace binding. Other typing and
 shortcuts retain their normal timing.
 
-Workspace shortcuts consume their page keys through focus changes, including
-Xwayland windows. Holding or releasing Super while the page key remains down
-must not page the newly focused application.
-
 `simplewm --check-config -c path` validates before starting. Super+Shift+R,
 `simplewmctl reload`, or SIGHUP applies changes without restarting applications.
 Invalid configuration or rejected output settings leave the working config in
@@ -78,31 +74,6 @@ The fonts and settings install with an ordinary `simpleupdate`, including on
 fresh SimpleOS installations. Log out and back in afterward. Existing stock
 13-point terminal settings move to 12 once, with the old config saved in
 `~/.local/state/simplewm/config-before-butterfonts`; other font choices stay as set.
-
-Xwayland also reports 104 DPI through `xdpyinfo`. SimpleWM selects the
-`simplewm-xwayland` launcher through wlroots 0.18.2's existing `WLR_XWAYLAND`
-override; it executes the system Xwayland with `-dpi 104` and forwards all
-wlroots arguments unchanged. The existing install/uninstall script rules include
-this helper. No wlroots or Xwayland patch or upgrade is required. X resources,
-font sizes, rendering settings and Wayland output scales are unchanged.
-
-Xwayland 24.1.6 defaults `monitorResolution` to 96 when no `-dpi` is supplied
-([screen initialization](https://sources.debian.org/src/xwayland/2%3A24.1.6-1/hw/xwayland/xwayland-screen.c/)).
-Its rootless RandR screen-size handler returns success without changing the
-screen, so `xrandr --dpi` and `xrandr --fb ... --dpi` cannot fix the reported DPI
-([output implementation](https://sources.debian.org/src/xwayland/2%3A24.1.6-1/hw/xwayland/xwayland-output.c/)).
-wlroots 0.18.2 supports an executable override but no additional startup arguments
-([launcher implementation](https://sources.debian.org/src/wlroots/0.18.2-3/xwayland/server.c/)).
-
-After `make && sudo make install`, start a new SimpleWM session, then check
-`xdpyinfo | grep -E 'dimensions|resolution'` and `xrdb -query | grep '^Xft\.'`.
-At 1920x1200, expect 468x293 millimeters and **104x104 dots per inch**, with
-`Xft.dpi: 104` and the existing font resources intact. Configuration reload
-cannot change the arguments of an already running Xwayland. To opt out for a
-session, launch with `WLR_XWAYLAND=/usr/bin/Xwayland simplewm-session`; explicit
-overrides are preserved. `make check-xwayland-dpi` verifies the default launcher,
-resources, output resizing, and the opt-out in private headless sessions without
-restarting the desktop. The test requires `xdpyinfo`, `xrdb` and `xrandr`.
 
 Native touchpad pinch, swipe and hold gestures are forwarded to the
 pointer-focused Wayland client through `zwp_pointer_gestures_v1` (version 3).
@@ -152,11 +123,6 @@ then updates SimpleSuite from `https://github.com/kjwat/simplesuite.git` and
 SimpleWM from `https://github.com/kjwat/simplewm.git`. No new package manager or
 automatic background updater is involved. Ordinary `apt update` and
 `apt full-upgrade` remain available for Debian and Liquorix.
-
-Updater 8 also recognizes the unmodified SimpleOS 1.0 ISO's bundled compositor,
-allowing a fresh installation to receive its published successor. Edited or
-unrecognized local source builds remain preserved. Log out and back in after
-updating to start the new compositor.
 
 Suite updates also build and stage SimplePlay, `simpleplay-core`, and SimpleTerm,
 including their desktop assets. The updater installs their media development
@@ -379,13 +345,13 @@ clipboard, layouts, maximize/restore, workspaces, reload, and Xwayland against
 the compositor. `make check-screenshot` checks a real Slurp selector's crosshair
 and immediate click/drag without prior pointer movement, cancellation, focus
 restoration, repeated hotkeys, and clipboard lock release.
-
 `VALIDATION.md` records completed checks and the image's
 remaining validation work.
 
-### Rejected visual renovation
+## Current upstream baseline
 
-The post-`ea715bb` resize, scene presentation, and custom surface-sampling
-renovation has been removed. Compositor rendering and resize behavior use the
-`ea715bb` baseline. The separate workspace-key handoff and 104-DPI Xwayland
-startup fixes remain. See `VISUAL-BASELINE.md` for the scope and checks.
+The WM code and session helpers have been fully restored to `ea715bb`.
+The post-baseline visual, workspace-key, Xwayland-DPI, and resize-wait changes
+are removed. SimpleUpdate release 9 is retained to support installed updater
+versions, and this rollback is published as a forward commit so normal updates
+continue tracking upstream. See [VISUAL-BASELINE.md](VISUAL-BASELINE.md).

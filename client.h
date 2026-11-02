@@ -294,24 +294,11 @@ client_is_unmanaged(Client *c)
 static inline void
 client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb)
 {
-	if (kb) {
-		struct wlr_keyboard_group *wlr_group = wlr_keyboard_group_from_wlr_keyboard(kb);
-		KeyboardGroup *group = wlr_group ? wlr_group->data : NULL;
-		uint32_t keys[WLR_KEYBOARD_KEYS_CAP];
-		size_t count = 0;
-		/* Xwayland synthesizes presses for held keys on enter. A shortcut
-		 * that changes focus must not reappear as application input. */
-		for (size_t i = 0; i < kb->num_keycodes; i++) {
-			uint32_t code = kb->keycodes[i];
-			if (group && ((code <= KEY_MAX && group->consumed[code]) ||
-					(group->chord_pending && code == group->pending_chord.keycode)))
-				continue;
-			keys[count++] = code;
-		}
-		wlr_seat_keyboard_notify_enter(seat, s, keys, count, &kb->modifiers);
-	} else {
+	if (kb)
+		wlr_seat_keyboard_notify_enter(seat, s, kb->keycodes,
+				kb->num_keycodes, &kb->modifiers);
+	else
 		wlr_seat_keyboard_notify_enter(seat, s, NULL, 0, NULL);
-	}
 }
 
 static inline void

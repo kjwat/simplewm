@@ -224,31 +224,3 @@ Disk installation completion, installed-system boot and desktop acceptance,
 and checks against the final ISO remain release work.
 This source publication does not certify a finished ISO. Physical hardware and
 the subjective mouse feel still require validation after installation.
-
-## Xwayland screen DPI — 2026-10-30
-
-Rebuilt against the installed wlroots **0.18.2-3**, with the unmodified distro
-Xwayland **24.1.6-1**. `make check-xwayland-dpi` passed in private headless
-sessions. The default SimpleWM launcher produced:
-
-```text
-dimensions:    1920x1200 pixels (468x293 millimeters)
-resolution:    104x104 dots per inch
-Xft.dpi:       104
-```
-
-The DPI remained 104x104 after both reported `xrandr` attempts and after changing
-the Wayland output to 1280x800 and back. Output scale stayed 1.0. The explicit
-`WLR_XWAYLAND=Xwayland` opt-out reproduced 96x96 while retaining `Xft.dpi: 104`.
-The same test passed with a snapshot of the desktop's complete `xrdb -query`
-output; all resources, including font names, sizes, antialiasing and hinting,
-remained unchanged across output changes. The native Wayland/Xwayland
-`tests/session-check.py` regression passed with `scripts/` on `PATH`.
-
-`make install DESTDIR=...` passed, including an executable copy of the launcher.
-The live desktop's resource database remained byte-for-byte identical, and all
-11 captured font/settings file hashes were unchanged. System deployment was
-not performed because passwordless sudo was unavailable. The existing desktop
-on `:0` was not restarted and still reported 96x96. Install the rebuilt
-compositor and helper, then start a new session as described in README.md;
-the verified 104x104 result belongs to the rebuilt private sessions.
