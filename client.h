@@ -346,38 +346,6 @@ client_set_border_color(Client *c, const float color[static 4])
 }
 
 static inline void
-client_apply_size_hints(Client *c, struct wlr_box *geom)
-{
-	int min_width = 0, min_height = 0, max_width = 0, max_height = 0;
-	int border = 2 * (int)c->bw;
-	int limit = INT_MAX - border;
-#ifdef XWAYLAND
-	if (client_is_x11(c)) {
-		xcb_size_hints_t *hints = c->surface.xwayland->size_hints;
-		/* XWM normalizes absent min/max hints to nonpositive values. */
-		if (hints) {
-			min_width = hints->min_width; min_height = hints->min_height;
-			max_width = hints->max_width; max_height = hints->max_height;
-		}
-		limit = UINT16_MAX;
-	} else
-#endif
-	{
-		struct wlr_xdg_toplevel_state *state = &c->surface.xdg->toplevel->current;
-		min_width = state->min_width; min_height = state->min_height;
-		max_width = state->max_width; max_height = state->max_height;
-	}
-	min_width = MIN(MAX(1, min_width), limit);
-	min_height = MIN(MAX(1, min_height), limit);
-	/* An absent maximum is unbounded. For contradictory X11 hints, keep
-	 * the minimum while staying within the protocol's dimension range. */
-	max_width = max_width > 0 ? MAX(min_width, MIN(max_width, limit)) : limit;
-	max_height = max_height > 0 ? MAX(min_height, MIN(max_height, limit)) : limit;
-	geom->width = MIN(MAX(min_width, MAX(border + 1, geom->width) - border), max_width) + border;
-	geom->height = MIN(MAX(min_height, MAX(border + 1, geom->height) - border), max_height) + border;
-}
-
-static inline void
 client_set_fullscreen(Client *c, int fullscreen)
 {
 #ifdef XWAYLAND
@@ -399,11 +367,9 @@ client_set_size(Client *c, uint32_t width, uint32_t height)
 		return 0;
 	}
 #endif
-	/* The last request can still be in flight, including when reversing back
-	 * to the committed size. Keep its serial until a matching commit. */
-	if ((int32_t)width == c->surface.xdg->toplevel->scheduled.width
-			&& (int32_t)height == c->surface.xdg->toplevel->scheduled.height)
-		return c->resize;
+	if ((int32_t)width == c->surface.xdg->toplevel->current.width
+			&& (int32_t)height == c->surface.xdg->toplevel->current.height)
+		return 0;
 	return wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, (int32_t)width, (int32_t)height);
 }
 

@@ -153,7 +153,6 @@ SimpleWM from `https://github.com/kjwat/simplewm.git`. No new package manager or
 automatic background updater is involved. Ordinary `apt update` and
 `apt full-upgrade` remain available for Debian and Liquorix.
 
-Interactive resize fixes are delivered through this source-update path.
 Updater 8 also recognizes the unmodified SimpleOS 1.0 ISO's bundled compositor,
 allowing a fresh installation to receive its published successor. Edited or
 unrecognized local source builds remain preserved. Log out and back in after
@@ -381,9 +380,12 @@ the compositor. `make check-screenshot` checks a real Slurp selector's crosshair
 and immediate click/drag without prior pointer movement, cancellation, focus
 restoration, repeated hotkeys, and clipboard lock release.
 
-`make check-visual` checks fullscreen restoration, output removal in horizontal,
-vertical and offset layouts, application min/max sizes, stalled tiled clients,
-and Xwayland buffer/border coordination. See [VISUAL-VALIDATION.md](VISUAL-VALIDATION.md)
-for the baseline comparisons, limits and ordinary `simpleupdate` delivery path.
 `VALIDATION.md` records completed checks and the image's
 remaining validation work.
+
+### Rejected visual renovation
+
+The post-`ea715bb` resize, scene presentation, and custom surface-sampling
+renovation has been removed. Compositor rendering and resize behavior use the
+`ea715bb` baseline. The separate workspace-key handoff and 104-DPI Xwayland
+startup fixes remain. See `VISUAL-BASELINE.md` for the scope and checks.
